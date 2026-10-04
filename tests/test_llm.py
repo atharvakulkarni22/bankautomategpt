@@ -222,5 +222,6 @@ def test_gemini_resends_its_own_reply_unchanged():
 
 
 def test_replay_never_imports_the_llm_layer():
-    code = "import sys, lba.replay; sys.exit(any(m.startswith(('lba.llm', 'anthropic', 'openai', 'google.genai')) for m in sys.modules))"
+    # lba.artifact is included: replay depends on it, so it must stay free of the LLM too.
+    code = "import sys, lba.replay, lba.artifact; sys.exit(any(m.startswith(('lba.llm', 'anthropic', 'openai', 'google.genai')) for m in sys.modules))"
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0

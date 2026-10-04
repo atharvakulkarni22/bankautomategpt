@@ -7,7 +7,7 @@ import lba
 from lba.cli import app
 
 SUBPACKAGES = ["bankapp", "surface", "agent", "artifact", "replay", "safety", "handoff"]
-COMMANDS = ["bank", "discover", "replay", "approve", "resume", "list"]
+COMMANDS = ["bank", "discover", "build", "replay", "approve", "resume", "list"]
 
 
 def test_version():

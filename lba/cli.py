@@ -95,10 +95,93 @@ def replay(artifact: str = typer.Argument(..., help="Name of the saved artifact.
     _todo("replay")
 
 
+def _fail(message: str):
+    typer.echo(f"Error: {message}", err=True)
+    raise typer.Exit(1)
+
+
 @app.command()
-def approve(run_id: str = typer.Argument(..., help="Run waiting for approval.")) -> None:
-    """Approve a risky step that a run is paused on."""
-    _todo("approve")
+def build(
+    recording: Path = typer.Argument(..., exists=True, dir_okay=False, help="A recording from `lba discover`."),
+    name: str = typer.Option(None, "--name", help="Artifact name (default: made from the goal)."),
+    version: int = typer.Option(None, "--version", help="Version number (default: the next free one)."),
+    app_name: str = typer.Option("First Legacy Bank", "--app", help="Name of the application."),
+    inputs: list[str] = typer.Option([], "--input", help="Optional name=value. If that value appears in the recording, it is replaced by {{name}}."),
+    artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved."),
+) -> None:
+    """Turn a discovery recording into a draft artifact (a reusable task)."""
+    from dotenv import load_dotenv
+
+    from lba.artifact import ArtifactError, BuildError, build_artifact, default_name, load_recording, next_version, save_artifact
+    from lba.surface import Values
+
+    load_dotenv()  # so secrets from .env are recognised and kept out of the file
+    try:
+        data = load_recording(recording)
+        name = name or default_name(data)
+        version = version or next_version(artifacts_dir, name)
+        result = build_artifact(
+            data, name=name, version=version, app=app_name,
+            values=Values(inputs=_parse_inputs(inputs)), source=recording.name,
+        )
+        path = save_artifact(result.artifact, artifacts_dir, values=Values())
+    except (BuildError, ArtifactError) as error:
+        _fail(str(error))
+
+    artifact = result.artifact
+    typer.echo(f"Built {artifact.metadata.name} v{artifact.metadata.version} (draft): {len(artifact.steps)} step(s), "
+               f"{len(artifact.inputs)} input(s), {len(artifact.outputs)} output(s).")
+    for warning in result.warnings:
+        typer.echo(f"  Warning: {warning}")
+    typer.echo(f"Saved to {path}\nNext: read and edit it, then run `lba approve {artifact.metadata.name}`.")
+
+
+def _locator_line(locator) -> str:
+    more = f" (+{len(locator.fallbacks)} fallback)" if locator.fallbacks else ""
+    return f"{locator.primary}{more}"
+
+
+@app.command()
+def approve(
+    artifact: str = typer.Argument(..., help="Artifact name (latest version), name.vN, or a file path."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation question."),
+    artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved."),
+) -> None:
+    """Review a draft artifact and mark it approved, so it may be replayed."""
+    from lba.artifact import ArtifactError, approve_artifact, load_artifact, resolve_artifact_path
+
+    try:
+        path = resolve_artifact_path(artifact, artifacts_dir)
+        loaded = load_artifact(path)
+    except ArtifactError as error:
+        _fail(str(error))
+
+    meta = loaded.metadata
+    if meta.status == "approved":
+        typer.echo(f"{meta.name} v{meta.version} is already approved.")
+        return
+
+    # Show what a reviewer needs to see before saying yes.
+    typer.echo(f"{meta.name} v{meta.version}: {meta.description}\nFile: {path}\n")
+    typer.echo(f"Inputs:  {', '.join(f'{i.name} ({i.type})' for i in loaded.inputs) or 'none'}")
+    typer.echo(f"Outputs: {', '.join(f'{o.name} ({o.type})' for o in loaded.outputs) or 'none'}")
+    typer.echo("Steps:")
+    for number, step in enumerate(loaded.steps, start=1):
+        extra = f" text={step.text!r}" if step.text is not None else ""
+        typer.echo(f"  {number}. {step.action} {_locator_line(step.locator)}{extra}")
+    for outcome in loaded.known_outcomes:
+        typer.echo(f"Outcome:      '{outcome.text}' -> {outcome.outcome}")
+    for interruption in loaded.known_interruptions:
+        typer.echo(f"Interruption: '{interruption.text}' -> {interruption.action} {_locator_line(interruption.locator)}")
+
+    if not yes and not typer.confirm("\nApprove this artifact for replay?"):
+        typer.echo("Not approved. Nothing changed.")
+        raise typer.Exit(1)
+    try:
+        approve_artifact(path)
+    except ArtifactError as error:
+        _fail(str(error))
+    typer.echo(f"Approved {meta.name} v{meta.version}.")
 
 
 @app.command()
@@ -108,9 +191,22 @@ def resume(run_id: str = typer.Argument(..., help="Run to resume after human tak
 
 
 @app.command("list")
-def list_artifacts() -> None:
+def list_artifacts(artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved.")) -> None:
     """List saved artifacts."""
-    _todo("list")
+    from lba.artifact import list_artifacts as find_artifacts
+
+    entries = find_artifacts(artifacts_dir)
+    if not entries:
+        typer.echo(f"No artifacts in {artifacts_dir}. Build one with: lba build <recording>")
+        return
+    typer.echo(f"{'NAME':<28}{'VER':<5}{'STATUS':<10}{'STEPS':<7}{'INPUTS':<20}DESCRIPTION")
+    for entry in entries:
+        if entry.error:
+            typer.echo(f"{entry.path.name:<28}INVALID: {entry.error.splitlines()[0]}")
+            continue
+        meta = entry.artifact.metadata
+        inputs = ",".join(i.name for i in entry.artifact.inputs) or "-"
+        typer.echo(f"{meta.name:<28}{meta.version:<5}{meta.status:<10}{len(entry.artifact.steps):<7}{inputs:<20}{meta.description[:50]}")
 
 
 if __name__ == "__main__":

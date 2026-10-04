@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "goal": "Log in and find the savings balance for the member",
+  "inputs": [
+    "member_id"
+  ],
+  "start_url": "http://127.0.0.1:5000",
+  "model": "gemini-3.8-flash",
+  "started_at": "2026-10-04T17:48:58+00:00",
+  "finished_at": "2026-10-04T17:49:54+00:00",
+  "stop_reason": "error",
+  "message": "LLM call failed: ServerError: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}",
+  "outputs": {},
+  "steps": [
+    {
+      "index": 1,
+      "time": "2026-10-04T17:49:07+00:00",
+      "url": "http://127.0.0.1:5000/login",
+      "reason": "Enter the user name to sign on.",
+      "action": {
+        "action": "type",
+        "target": {
+          "role": "textbox",
+          "name": "User name:"
+        },
+        "text": "{{secret:BANK_USER}}",
+        "reason": "Enter the user name to sign on."
+      },
+      "target_candidates": [
+        {
+          "role": "textbox",
+          "name": "User name:"
+        },
+        {
+          "label": "User name:"
+        },
+        {
+          "css": "input[name=\"user\"]"
+        }
+      ],
+      "status": "ok",
+      "result": "typed"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "goal": "Log in and find the savings balance for the member",
+  "inputs": [
+    "member_id"
+  ],
+  "start_url": "http://127.0.0.1:5000",
+  "model": "gemini-2.5-flash",
+  "started_at": "2026-10-04T18:01:59+00:00",
+  "finished_at": "2026-10-04T18:02:00+00:00",
+  "stop_reason": "error",
+  "message": "LLM call failed: ClientError: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://ai.google.dev/gemini-api/docs/get-started).', 'status': 'NOT_FOUND'}}",
+  "outputs": {},
+  "steps": []
+}

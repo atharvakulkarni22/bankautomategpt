@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "goal": "Log in and find the savings balance for the member",
+  "inputs": [
+    "member_id"
+  ],
+  "start_url": "http://127.0.0.1:5000",
+  "model": "gemini-3.7-flash",
+  "started_at": "2026-10-04T17:50:21+00:00",
+  "finished_at": "2026-10-04T17:51:17+00:00",
+  "stop_reason": "error",
+  "message": "LLM call failed: ServerError: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}",
+  "outputs": {},
+  "steps": [
+    {
+      "index": 1,
+      "time": "2026-10-04T17:50:58+00:00",
+      "url": "http://127.0.0.1:5000/login",
+      "reason": "Enter the user name to sign on.",
+      "action": {
+        "action": "type",
+        "target": {
+          "role": "textbox",
+          "name": "User name:"
+        },
+        "text": "{{secret:BANK_USER}}",
+        "reason": "Enter the user name to sign on."
+      },
+      "target_candidates": [
+        {
+          "role": "textbox",
+          "name": "User name:"
+        },
+        {
+          "label": "User name:"
+        },
+        {
+          "css": "input[name=\"user\"]"
+        }
+      ],
+      "status": "ok",
+      "result": "typed"
+    },
+    {
+      "index": 2,
+      "time": "2026-10-04T17:51:02+00:00",
+      "url": "http://127.0.0.1:5000/login",
+      "reason": "Type the bank password into the password field.",
+      "action": {
+        "action": "type",
+        "target": {
+          "css": "input[name=\"pw\"]"
+        },
+        "text": "{{secret:BANK_PASSWORD}}",
+        "reason": "Type the bank password into the password field."
+      },
+      "target_candidates": [
+        {
+          "css": "input[name=\"pw\"]"
+        }
+      ],
+      "status": "ok",
+      "result": "typed"
+    },
+    {
+      "index": 3,
+      "time": "2026-10-04T17:51:14+00:00",
+      "url": "http://127.0.0.1:5000/login",
+      "reason": "Click Sign On to log in.",
+      "action": {
+        "action": "click",
+        "target": {
+          "role": "button",
+          "name": "Sign On"
+        },
+        "reason": "Click Sign On to log in."
+      },
+      "target_candidates": [
+        {
+          "role": "button",
+          "name": "Sign On"
+        },
+        {
+          "css": "body > center > table > tbody > tr:nth-of-type(2) > td > form > table > tbody > tr:nth-of-type(3) > td > input"
+        }
+      ],
+      "status": "ok",
+      "result": "clicked"
+    }
+  ]
+}
