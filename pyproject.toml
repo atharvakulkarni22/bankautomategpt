@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lba"
+version = "0.1.0"
+description = "Agent that learns a legacy bank web app task once, then replays it without an LLM."
+requires-python = ">=3.11"
+dependencies = [
+    "flask",
+    "playwright",
+    "anthropic",
+    "pydantic>=2",
+    "pyyaml",
+    "typer",
+    "python-dotenv",
+    "pillow",
+    "pytest",
+]
+
+[project.scripts]
+lba = "lba.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["lba*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
