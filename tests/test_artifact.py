@@ -507,3 +507,13 @@ def test_warns_when_every_locator_is_made_from_the_value_read():
     recording = good_recording()
     recording["steps"][7] = recorded(8, action("read", {"role": "cell", "name": "Priya Sharma"}, output_name="member_name"))
     assert any("located by its own value" in w for w in build(recording).warnings)
+
+
+def test_a_human_takeover_during_discovery_is_flagged_not_silently_dropped():
+    recording = good_recording()
+    recording["steps"].insert(3, recorded(98, action("ask_human", text="Please sign on", reason="stuck"), status="human",
+                                          result="A human took over and did: click button \"Sign On\""))
+    result = build(recording)
+    assert len(result.artifact.steps) == 9  # the human's step is not turned into a step the machine would repeat
+    assert any("A human took over 1 time(s) during discovery" in w and "human_events" in w for w in result.warnings)
+    assert not any("Left out" in w for w in result.warnings)  # a human step is not counted as a failed one

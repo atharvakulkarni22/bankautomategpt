@@ -111,6 +111,10 @@ _CSS_PATH_FN = r"""
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
 """
 
+# The same script under a public name: the human recorder (bag.handoff) reuses it, so a human's
+# click is described with the very same css path that the rest of the system would use.
+CSS_PATH_JS = _CSS_PATH_FN
+
 # Facts about one element that Playwright cannot give us directly.
 _FACTS_JS = (
     "(el) => {\n"

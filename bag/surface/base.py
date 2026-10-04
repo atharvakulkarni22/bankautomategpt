@@ -76,3 +76,17 @@ class Surface(Protocol):
     def pause(self, seconds: float) -> None:
         """Wait, while still letting the app run (a plain time.sleep can stall a browser)."""
         ...
+
+    # The next three are what a human takeover needs (see bag.handoff).
+
+    def add_init_script(self, script: str) -> None:
+        """Run a script in every frame now open AND every frame loaded later. It must be safe to run twice."""
+        ...
+
+    def evaluate_in_frames(self, expression: str) -> list:
+        """Evaluate a JavaScript expression in the main page and each iframe; one result per frame."""
+        ...
+
+    def bring_to_front(self) -> None:
+        """Raise the window so a human can see it. Only meaningful for a headed browser."""
+        ...

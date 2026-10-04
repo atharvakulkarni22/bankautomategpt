@@ -130,6 +130,16 @@ def test_default_ports_and_path_prefixes():
     assert guard.check(action(), context("http://h.test/")).decision is Decision.BLOCK
 
 
+def test_a_frame_that_has_not_started_loading_is_not_an_attack():
+    # While an iframe is being created the browser reports its address as "". That used to be blocked as a
+    # foreign site, which randomly failed healthy runs (found by running the suite repeatedly).
+    guard = make_guard()
+    assert guard.check(action(), context(frames=[""])).decision is Decision.ALLOW
+    assert guard.check(action(), context(frames=[f"{BANK}/search", ""])).decision is Decision.ALLOW
+    assert guard.check(action(), context(frames=["", "http://evil.test/x"])).decision is Decision.BLOCK  # still looks at the rest
+    assert guard.check(action(), context(url="")).decision is Decision.BLOCK  # the main page gets no such pass
+
+
 def test_a_frame_from_another_site_blocks_the_page():
     guard = make_guard()
     assert guard.check(action(), context(frames=[f"{BANK}/search", "about:blank", "about:srcdoc"])).decision is Decision.ALLOW

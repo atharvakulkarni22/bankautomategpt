@@ -78,7 +78,7 @@ class BrowserSurface:
         self.blur_screenshots = blur_screenshots
         self.blur_selectors = tuple(blur_selectors)
         self._viewport = viewport or {"width": 1280, "height": 800}
-        self._playwright = self._browser = self._page = None
+        self._playwright = self._browser = self._context = self._page = None
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -88,8 +88,8 @@ class BrowserSurface:
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=self.headless)
         # A fresh context = fresh cookies, so every run starts signed out.
-        context = self._browser.new_context(viewport=self._viewport)
-        self._page = context.new_page()
+        self._context = self._browser.new_context(viewport=self._viewport)
+        self._page = self._context.new_page()
         self._page.set_default_timeout(self.timeout_ms)
 
     def close(self):
@@ -97,7 +97,7 @@ class BrowserSurface:
             self._browser.close()
         if self._playwright:
             self._playwright.stop()
-        self._playwright = self._browser = self._page = None
+        self._playwright = self._browser = self._context = self._page = None
 
     def __enter__(self):
         self.start()
@@ -215,7 +215,41 @@ class BrowserSurface:
         return self.page.url
 
     def pause(self, seconds: float) -> None:
-        self.page.wait_for_timeout(seconds * 1000)
+        # Wrapped so that a browser window closed by a human surfaces as a SurfaceError, not a raw crash.
+        with self._errors("pause"):
+            self.page.wait_for_timeout(seconds * 1000)
+
+    # ------------------------------------------------------- for human takeover
+
+    def add_init_script(self, script: str) -> None:
+        """Run `script` in every page and frame loaded from now on, AND in the frames already open.
+
+        (Playwright's own add_init_script only affects documents loaded later, so the open frames
+        are handled by hand.) The script must be safe to run twice in the same frame.
+        """
+        with self._errors("add_init_script"):
+            self._context.add_init_script(script=script)
+            for frame in self.page.frames:
+                try:
+                    frame.evaluate(script)
+                except PlaywrightError:
+                    continue  # a frame that is navigating gets the script from the init script instead
+
+    def evaluate_in_frames(self, expression: str) -> list:
+        """Evaluate a JavaScript expression in the main page and every iframe. One result per frame."""
+        results = []
+        with self._errors("evaluate_in_frames"):
+            for frame in self.page.frames:
+                try:
+                    results.append(frame.evaluate(expression))
+                except PlaywrightError:
+                    continue  # the frame went away while we were looking
+        return results
+
+    def bring_to_front(self) -> None:
+        """Raise the browser window, so a human who has to take over can see it."""
+        with self._errors("bring_to_front"):
+            self.page.bring_to_front()
 
     # ------------------------------------------------------ for the safety layer
 

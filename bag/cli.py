@@ -69,15 +69,20 @@ def discover(
     no_screenshot: bool = typer.Option(False, "--no-screenshot", help="Do not send screenshots (for text-only models)."),
     output_dir: Path = typer.Option("evidence/recordings", help="Where the recording is saved."),
     safety_config: Path = typer.Option("config/safety.yaml", help="The safety rules."),
+    takeover: bool = typer.Option(False, "--takeover", help="When the AI asks for help, let a person take the browser. Needs --headed."),
+    interventions_dir: Path = typer.Option("evidence/interventions", help="Where takeover files are saved."),
 ) -> None:
     """Let the agent explore the bank app to reach a goal, and record what it did."""
     # Imported here so `bag --help` stays fast.
     from dotenv import load_dotenv
 
     from bag.agent import AgentLLM, Recorder, run_discovery
+    from bag.handoff import HumanTakeover
     from bag.llm import LLMConfigError, get_client
     from bag.surface import BrowserSurface, Values
 
+    if takeover and not headed:
+        _fail("--takeover needs --headed: a person cannot work in a browser window they cannot see.")
     load_dotenv()
     values = Values(inputs=_parse_inputs(inputs))  # secrets come from .env, never from the command line
     start_url = start_url or os.environ.get("BANK_URL", "http://127.0.0.1:5000")
@@ -95,11 +100,14 @@ def discover(
         blur_screenshots=config.blur_screenshots, blur_selectors=config.blur_selectors,
     )
     with surface:
+        handoff = HumanTakeover(surface, directory=interventions_dir, redactor=redactor) if takeover else None
         result = run_discovery(
             goal, surface, AgentLLM(client, use_screenshot=not no_screenshot), recorder, values, start_url,
-            guard=guard, redactor=redactor, max_steps=max_steps, max_seconds=max_seconds,
+            guard=guard, redactor=redactor, takeover=handoff, max_steps=max_steps, max_seconds=max_seconds,
         )
 
+    for item in result.interventions:
+        typer.echo(f"A human took over at step {item.step} ({item.status}, {item.event_count} action(s)): {item.path}")
     typer.echo(f"Stopped: {result.stop_reason} after {result.steps} step(s).")
     for name, value in result.outputs.items():
         typer.echo(f"  {name} = {redactor.text(value)}")
@@ -121,6 +129,8 @@ def replay(
     artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved."),
     screenshot_dir: Path = typer.Option("evidence/screenshots", help="Where a failure screenshot is saved."),
     safety_config: Path = typer.Option("config/safety.yaml", help="The safety rules."),
+    takeover: bool = typer.Option(False, "--takeover", help="When a step cannot be done, let a person take the browser. Needs --headed."),
+    interventions_dir: Path = typer.Option("evidence/interventions", help="Where takeover files are saved."),
 ) -> None:
     """Replay an approved artifact with new inputs. No LLM is used.
 
@@ -130,9 +140,12 @@ def replay(
     from dotenv import load_dotenv
 
     from bag.artifact import ArtifactError, load_artifact, resolve_artifact_path
+    from bag.handoff import HumanTakeover
     from bag.replay import BUSINESS_OUTCOME, SUCCESS, Replayer, ReplayRefused, prepare_run, resolve_start_url
     from bag.surface import BrowserSurface, Values
 
+    if takeover and not headed:
+        _fail("--takeover needs --headed: a person cannot work in a browser window they cannot see.")
     load_dotenv()
     try:
         loaded = load_artifact(resolve_artifact_path(artifact, artifacts_dir))
@@ -150,8 +163,9 @@ def replay(
         blur_screenshots=config.blur_screenshots, blur_selectors=config.blur_selectors,
     )
     with surface:
+        handoff = HumanTakeover(surface, directory=interventions_dir, redactor=redactor) if takeover else None
         result = Replayer(
-            loaded, surface, guard=guard, redactor=redactor, start_url=url, timeout_s=timeout,
+            loaded, surface, guard=guard, redactor=redactor, handoff=handoff, start_url=url, timeout_s=timeout,
             screenshot_dir=screenshot_dir,
         ).run()
 
@@ -269,9 +283,24 @@ def approve(
 
 
 @app.command()
-def resume(run_id: str = typer.Argument(..., help="Run to resume after human takeover.")) -> None:
-    """Resume a run after a human has taken over."""
-    _todo("resume")
+def resume(
+    run_id: str = typer.Argument(None, help="Which paused run (an id or the start of one). Default: the one that is waiting."),
+    interventions_dir: Path = typer.Option("evidence/interventions", help="Where takeover files are saved."),
+) -> None:
+    """Tell a paused run that the human has finished, so it carries on.
+
+    Run this in a second terminal while `bag replay --takeover` (or `bag discover --takeover`)
+    is waiting. Pressing Enter in the paused terminal does the same thing.
+    """
+    from bag.handoff import find_intervention, request_resume
+
+    try:
+        waiting = find_intervention(interventions_dir, run_id)
+    except LookupError as error:
+        _fail(str(error))
+    request_resume(interventions_dir, waiting["id"])
+    typer.echo(f"Resume requested for {waiting['id']} (step {waiting.get('step')}: {waiting.get('reason', '')[:80]}).")
+    typer.echo("The paused run will carry on within a second or two.")
 
 
 @app.command("list")

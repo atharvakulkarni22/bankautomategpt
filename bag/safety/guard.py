@@ -124,8 +124,12 @@ class Guard:
         return parsed.scheme, parsed.hostname.lower(), port, parsed.path.rstrip("/")
 
     def _url_allowed(self, url: str, *, frame: bool = False) -> bool:
-        if frame and url.startswith("about:"):
-            return True  # an empty frame (about:blank) loads nothing from anywhere
+        if frame and (url == "" or url.startswith("about:")):
+            # An empty frame (about:blank), or one that has been created but has not started loading
+            # (the browser then reports its address as ""), shows nothing from anywhere. Once it loads a
+            # real page its address is real, and the next action checks that. Treating "" as foreign made
+            # a perfectly normal page load look like an attack. (The MAIN page is never given this pass.)
+            return True
         try:
             parsed = urlparse(url)
             port = parsed.port

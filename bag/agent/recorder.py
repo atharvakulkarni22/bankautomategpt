@@ -44,7 +44,7 @@ class Recorder:
         }
         self._save()
 
-    def add_step(self, index, url, reason, status, result, action=None, candidates=(), raw=None):
+    def add_step(self, index, url, reason, status, result, action=None, candidates=(), raw=None, human_events=None):
         """Record one step. `action` is None when the model's output was unusable (then `raw` is kept)."""
         step = {
             "index": index,
@@ -53,11 +53,13 @@ class Recorder:
             "reason": reason,
             "action": action.model_dump(exclude_none=True, exclude_defaults=True) if action else None,
             "target_candidates": [c.model_dump(exclude_none=True, exclude_defaults=True) for c in candidates],
-            "status": status,  # ok | error | blocked | invalid
+            "status": status,  # ok | error | blocked | invalid | human
             "result": result,
         }
         if raw is not None:
             step["raw"] = raw
+        if human_events is not None:  # a human took over at this step: what they clicked and typed
+            step["human_events"] = human_events
         self.data["steps"].append(self.redactor.data(step))
         self._save()
 

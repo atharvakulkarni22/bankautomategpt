@@ -85,6 +85,7 @@ class RunResult:
     failure: Failure | None = None  # FAILURE: where and why
     log: list[LogEntry] = field(default_factory=list)
     seconds: float = 0.0
+    interventions: list = field(default_factory=list)  # every time a human took over (bag.handoff.Intervention)
 
 
 # -------------------------------------------------------------- before a run
@@ -153,6 +154,7 @@ class Replayer:
         *,
         guard,
         redactor: Redactor | None = None,
+        handoff=None,
         start_url: str | None = None,
         timeout_s: float = 10.0,
         max_retries: int = 2,
@@ -173,6 +175,10 @@ class Replayer:
         # without a guard must be a loud mistake, not a quiet one.
         self.guard = guard
         self.redactor = redactor or Redactor()  # scrubs every log line and failure report
+        # Optional: a bag.handoff.HumanTakeover. Without one, a stuck step simply fails the run.
+        self.handoff = handoff
+        self.interventions: list = []
+        self._handovers = 0
         self.clock = clock
         self.sleep = sleep or surface.pause
         self.screenshot_dir = Path(screenshot_dir)
@@ -195,9 +201,7 @@ class Replayer:
                 raise SafetyBlocked("The start page was blocked by a safety rule.",
                                     expected="a start page on the allowlist", observed=start.reason)
             self.surface.goto(self.start_url)
-            for number, step in enumerate(self.artifact.steps, start=1):
-                self._phase, self._step_number, self._action = "step", number, step.action
-                self._run_step(number, step)
+            self._run_steps()
             self._phase, self._step_number, self._action = "finish", None, None
             self._watch(None)  # a popup or "No member found" may appear after the last step
             self._success_check()
@@ -205,13 +209,66 @@ class Replayer:
         except BusinessOutcome as outcome:
             self._log(self._step_number, "step", f"ended with business outcome {outcome.code}")
             return RunResult(BUSINESS_OUTCOME, name, outcome_code=outcome.code, message=self.redactor.text(str(outcome)),
-                             log=self.log, seconds=self.clock() - started)
+                             log=self.log, seconds=self.clock() - started, interventions=self.interventions)
         except (SurfaceError, ReplayError) as error:
             problem = classify(error)
-            return RunResult(FAILURE, name, failure=self._failure(problem), log=self.log, seconds=self.clock() - started)
-        return RunResult(SUCCESS, name, outputs=outputs, log=self.log, seconds=self.clock() - started)
+            return RunResult(FAILURE, name, failure=self._failure(problem), log=self.log, seconds=self.clock() - started,
+                             interventions=self.interventions)
+        return RunResult(SUCCESS, name, outputs=outputs, log=self.log, seconds=self.clock() - started,
+                         interventions=self.interventions)
 
     # ----------------------------------------------------------------- steps
+
+    def _run_steps(self) -> None:
+        """Run every step. If a human can be called in, a stuck step is handed to them.
+
+        Only LocatorNotFound and UnexpectedState are handed over: those mean "the page is not
+        what the artifact expects", which a person can sort out. A safety block, a business
+        outcome or a retried-out timeout are not things to hand to a human.
+        """
+        steps = self.artifact.steps
+        number = 1
+        while number <= len(steps):
+            step = steps[number - 1]
+            self._phase, self._step_number, self._action = "step", number, step.action
+            try:
+                self._run_step(number, step)
+                number += 1
+                continue
+            except (LocatorNotFound, UnexpectedState) as problem:
+                pending = problem
+
+            while True:  # a human takes over; repeat if the page is still not right afterwards
+                if not self._take_over(number, step, pending):
+                    raise pending
+                self._phase, self._step_number, self._action = "step", number, step.action
+                if step.action == "read":
+                    break  # the human cannot hand us a value, so read it again now that they have fixed the page
+                try:
+                    self._verify_expected(number, step)  # did the human really get the page to where the step leads?
+                except UnexpectedState as again:
+                    pending = again
+                    continue
+                number += 1  # the human did this step for us: carry on with the next one
+                break
+
+    def _take_over(self, number: int, step: Step, problem: ReplayError) -> bool:
+        """Hand the browser to a human. Returns True if they finished and the run may continue."""
+        if self.handoff is None or self._handovers >= self.handoff.max_interventions:
+            return False
+        self._handovers += 1
+        meta = self.artifact.metadata
+        result = self.handoff.take_over(
+            kind="replay", goal=meta.description or meta.name, label=f"replay {meta.name} v{meta.version}",
+            step=number, action=step.action, error=type(problem).__name__, reason=str(problem),
+            expected=problem.expected, observed=problem.observed,
+        )
+        self.interventions.append(result.intervention)
+        if result.aborted:
+            self._log(number, "handoff", f"The human did not resume ({result.via}); the run ends here.")
+            return False
+        self._log(number, "handoff", f"A human took over (resumed via {result.via}) and did: {result.summary}")
+        return True
 
     def _run_step(self, number: int, step: Step) -> None:
         self._authorize(number, step, step.locator)

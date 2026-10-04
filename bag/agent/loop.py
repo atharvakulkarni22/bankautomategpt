@@ -35,6 +35,7 @@ class DiscoveryResult:
     outputs: dict = field(default_factory=dict)
     recording_path: Path | None = None
     message: str = ""  # the question (ask_human), the summary (done) or the error
+    interventions: list = field(default_factory=list)  # every time a human took over (bag.handoff.Intervention)
 
 
 def _short(text: str, limit: int = MAX_RESULT_CHARS) -> str:
@@ -83,6 +84,7 @@ def run_discovery(
     *,
     guard,
     redactor=None,
+    takeover=None,
     max_steps=25,
     max_seconds=180,
     clock=time.monotonic,
@@ -92,6 +94,9 @@ def run_discovery(
     `guard` must offer .check_url(url) and .authorize(action, context, run=, step=), as
     bag.safety.Guard does. There is deliberately no default: running without a guard
     must be a loud mistake, not a quiet one.
+
+    `takeover` (optional, a bag.handoff.HumanTakeover) lets a person take the browser when the AI
+    says ask_human. The loop then carries on from the page the person leaves.
     """
     redactor = redactor or Redactor(values)
     # One redactor for the whole run. The recorder may have been built with a different one
@@ -102,12 +107,13 @@ def run_discovery(
     outputs: dict = {}
     history: list = []  # (index, action summary, result) shown to the AI each turn
     steps = 0
+    taken_over: list = []  # the interventions of this run
     stop, message = STOP_MAX_STEPS, ""  # what happens if the loop simply runs out of steps
 
     def finish(stop_reason, steps_taken, text=""):
         text = redactor.text(text)
         recorder.finish(stop_reason, outputs, text)
-        return DiscoveryResult(stop_reason, steps_taken, redactor.data(outputs), recorder.path, text)
+        return DiscoveryResult(stop_reason, steps_taken, redactor.data(outputs), recorder.path, text, taken_over)
 
     # The browser may only start on an allowed site.
     verdict = guard.check_url(start_url)
@@ -166,7 +172,24 @@ def run_discovery(
             history.append((index, action.summary(), result))
             continue
 
-        # 5. The AI can end the run itself.
+        # 5a. The AI asked for a human. With takeover on, a person does the part the AI could not,
+        #     and the run CONTINUES from the page they leave behind. Without it, the run stops here.
+        if action.action == "ask_human" and takeover is not None and len(taken_over) < takeover.max_interventions:
+            waited_from = clock()
+            taken = takeover.take_over(
+                kind="discovery", goal=goal, label="discovery", step=index, action="ask_human", reason=action.text or ""
+            )
+            started += clock() - waited_from  # the human's time must not count against the time limit
+            taken_over.append(taken.intervention)
+            if not taken.aborted:
+                shown = redactor.text(f"A human took over and did: {taken.summary}")
+                recorder.add_step(index, observation.url, action.reason, "human", shown, action=action,
+                                  human_events=taken.events)
+                history.append((index, action.summary(), shown))  # the AI learns what changed (typed values never included)
+                continue
+            # The human gave up: fall through, and the run stops with the AI's question as before.
+
+        # 5b. The AI can end the run itself.
         if action.action in ("done", "ask_human"):
             recorder.add_step(index, observation.url, action.reason, "ok", action.action, action=action)
             stop = STOP_DONE if action.action == "done" else STOP_ASK_HUMAN

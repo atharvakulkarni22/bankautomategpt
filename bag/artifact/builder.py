@@ -169,10 +169,13 @@ def build_artifact(
         )
 
     steps: list[Step] = []
-    skipped = collapsed = 0
+    skipped = collapsed = human = 0
     output_info: dict[str, dict] = {}  # output name -> {why, type}
     for index, recorded in enumerate(steps_in):
         action = recorded.get("action")
+        if recorded.get("status") == "human":
+            human += 1  # a person did this part by hand; it is not a step the machine can repeat
+            continue
         if recorded.get("status") != "ok":
             skipped += 1  # a failed, blocked or invalid attempt
             continue
@@ -212,6 +215,11 @@ def build_artifact(
         raise BuildError("The recording has no successful steps to build from.")
     if skipped:
         warnings.append(f"Left out {skipped} step(s) that failed or were invalid.")
+    if human:
+        warnings.append(
+            f"A human took over {human} time(s) during discovery. What they did is NOT in the artifact "
+            "(see human_events in the recording): check the steps around it and add anything missing by hand."
+        )
     if collapsed:
         warnings.append(f"Merged {collapsed} repeated 'type' step(s) into one.")
     if not output_info:
