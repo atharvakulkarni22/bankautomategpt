@@ -11,6 +11,8 @@ dependencies = [
     "flask",
     "playwright",
     "anthropic",
+    "google-genai",
+    "openai",
     "pydantic>=2",
     "pyyaml",
     "typer",
@@ -24,6 +26,9 @@ lba = "lba.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["lba*"]
+
+[tool.setuptools.package-data]
+"lba.bankapp" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

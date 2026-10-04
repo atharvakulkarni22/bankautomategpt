@@ -10,9 +10,22 @@ def _todo(name: str) -> None:
 
 
 @app.command()
-def bank() -> None:
+def bank(port: int = typer.Option(5000, help="Port to listen on (host is always 127.0.0.1).")) -> None:
     """Start the fake legacy bank web app."""
-    _todo("bank")
+    # Imported here so `lba --help` stays fast and works without Flask settings.
+    from dotenv import load_dotenv
+
+    from lba.bankapp.app import create_app
+
+    load_dotenv()  # reads BANK_USER, BANK_PASSWORD and fault switches from .env
+    try:
+        bank_app = create_app()
+    except RuntimeError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+    # threaded=True lets the page and its iframe load at the same time,
+    # which matters when the "slow" fault is on.
+    bank_app.run(host="127.0.0.1", port=port, threaded=True)
 
 
 @app.command()
