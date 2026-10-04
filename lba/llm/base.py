@@ -46,6 +46,7 @@ class Message:
     tool_call_id: str | None = None
     tool_name: str | None = None
     raw: Any = None
+    images: list[bytes] = field(default_factory=list)  # PNG bytes, sent with a "user" message
 
 
 @dataclass
@@ -60,7 +61,13 @@ class LLMResponse:
 
 
 class LLMClient(Protocol):
-    """What every provider adapter offers."""
+    """What every provider adapter offers.
+
+    force_tool="name" means "the model must answer by calling that tool". It is
+    a request, not a promise: some models (for example claude-sonnet-5-5) reject
+    forced tool use, so their adapters fall back to a normal request. Callers
+    must therefore still cope with a reply that contains no tool call.
+    """
 
     def complete(
         self,
@@ -68,4 +75,5 @@ class LLMClient(Protocol):
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
+        force_tool: str | None = None,
     ) -> LLMResponse: ...

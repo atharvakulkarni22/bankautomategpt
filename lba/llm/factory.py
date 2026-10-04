@@ -48,7 +48,8 @@ def get_client(provider=None, model=None, env=None) -> LLMClient:
     if provider == "anthropic":
         from .anthropic_client import AnthropicClient
 
-        return AnthropicClient(model, api_key=api_key)
+        # LBA_EFFORT (optional) trades thinking depth for speed on Claude models.
+        return AnthropicClient(model, api_key=api_key, effort=(env.get("LBA_EFFORT") or "").strip() or None)
     if provider == "gemini":
         from .gemini_client import GeminiClient
 

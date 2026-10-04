@@ -5,6 +5,7 @@ vLLM and many others all offer an OpenAI-compatible endpoint. This one adapter i
 how the project supports "any other LLM".
 """
 
+import base64
 import json
 
 from .base import LLMResponse, Message, ToolCall, ToolSpec
@@ -20,13 +21,15 @@ class OpenAIClient:
         self.model = model
         self.client = client
 
-    def complete(self, system, messages, tools=None, max_tokens=None):
+    def complete(self, system, messages, tools=None, max_tokens=None, force_tool=None):
         kwargs = {"model": self.model, "messages": self._messages(system, messages)}
         if tools:
             kwargs["tools"] = [
                 {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}}
                 for t in tools
             ]
+            if force_tool:
+                kwargs["tool_choice"] = {"type": "function", "function": {"name": force_tool}}
         # Only sent when asked for: newer OpenAI models and some servers disagree
         # about the parameter name, so the default is to leave it out.
         if max_tokens:
@@ -56,6 +59,12 @@ class OpenAIClient:
                 out.append(entry)
             elif m.role == "tool":
                 out.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": m.text})
+            elif m.images:
+                parts = [{"type": "text", "text": m.text}] + [
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(png).decode()}}
+                    for png in m.images
+                ]
+                out.append({"role": "user", "content": parts})
             else:
                 out.append({"role": "user", "content": m.text})
         return out

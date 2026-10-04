@@ -3,6 +3,8 @@
 resolve():          Target  -> the one matching element (main page AND iframes)
 describe_element(): element -> several candidate Targets, best first, so the
                     recorder can store fallbacks in case one stops working.
+unnamed_controls(): form fields the accessibility tree cannot name, with a css
+                    selector for each (so the agent can still target them).
 """
 
 import re
@@ -49,14 +51,43 @@ def resolve(page, target: Target):
     return found[0][1]
 
 
-# ------------------------------------------------------------ describe_element
+# ------------------------------------------------------------------ JavaScript
 
-# Facts about an element that Playwright cannot give us directly.
-_FACTS_JS = r"""
-(el) => {
-  const doc = el.ownerDocument;
-  const tag = el.tagName.toLowerCase();
+# Builds a CSS selector for an element: #id, else tag[name="..."], else a chain
+# like body > table:nth-of-type(2) > ... Pasted inside the scripts below.
+_CSS_PATH_FN = r"""
+  const cssPath = (el) => {
+    const doc = el.ownerDocument;
+    const tag = el.tagName.toLowerCase();
+    const unique = (sel) => { try { return doc.querySelectorAll(sel).length === 1; } catch (e) { return false; } };
+    if (el.id && unique('#' + CSS.escape(el.id))) return '#' + CSS.escape(el.id);
+    const name = el.getAttribute('name');
+    if (name) {
+      const sel = tag + '[name="' + name.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]';
+      if (unique(sel)) return sel;
+    }
+    const parts = [];
+    for (let node = el; node && node.nodeType === 1 && node !== doc.documentElement; node = node.parentElement) {
+      let part = node.tagName.toLowerCase();
+      const parent = node.parentElement;
+      if (parent) {
+        const same = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
+        if (same.length > 1) part += ':nth-of-type(' + (same.indexOf(node) + 1) + ')';
+      }
+      parts.unshift(part);
+      if (node === doc.body) break;
+    }
+    return parts.join(' > ');
+  };
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+"""
+
+# Facts about one element that Playwright cannot give us directly.
+_FACTS_JS = (
+    "(el) => {\n"
+    + _CSS_PATH_FN
+    + r"""
+  const tag = el.tagName.toLowerCase();
 
   // Label text, ignoring any form control sitting inside the <label>.
   let label = null;
@@ -74,33 +105,62 @@ _FACTS_JS = r"""
     const t = clean(el.innerText);
     text = t && t.length <= 60 ? t : null;
   }
-
-  // A CSS path: #id, else tag[name], else a chain like body > table:nth-of-type(2) > ...
-  const unique = (sel) => { try { return doc.querySelectorAll(sel).length === 1; } catch (e) { return false; } };
-  let css = null;
-  if (el.id && unique('#' + CSS.escape(el.id))) css = '#' + CSS.escape(el.id);
-  const name = el.getAttribute('name');
-  if (!css && name) {
-    const sel = tag + '[name="' + name.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]';
-    if (unique(sel)) css = sel;
-  }
-  if (!css) {
-    const parts = [];
-    for (let node = el; node && node.nodeType === 1 && node !== doc.documentElement; node = node.parentElement) {
-      let part = node.tagName.toLowerCase();
-      const parent = node.parentElement;
-      if (parent) {
-        const same = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
-        if (same.length > 1) part += ':nth-of-type(' + (same.indexOf(node) + 1) + ')';
-      }
-      parts.unshift(part);
-      if (node === doc.body) break;
-    }
-    css = parts.join(' > ');
-  }
-  return { label, text, css };
+  return { label, text, css: cssPath(el) };
 }
 """
+)
+
+# Visible fields with no label, aria-label, title or placeholder: the accessibility
+# tree shows them as a bare "textbox". Report each with a css selector and the
+# text next to it (the cell on its left, else its table row).
+_UNNAMED_JS = (
+    "() => {\n"
+    + _CSS_PATH_FN
+    + r"""
+  const out = [];
+  for (const el of document.querySelectorAll('input, select, textarea')) {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (tag === 'input' && ['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue;
+    if (!el.getClientRects().length) continue;  // not visible
+    const named = (el.labels && el.labels.length) || el.getAttribute('aria-label')
+      || el.getAttribute('aria-labelledby') || el.getAttribute('title') || el.getAttribute('placeholder');
+    if (named) continue;
+    const role = tag === 'select' ? 'combobox' : type === 'checkbox' ? 'checkbox' : type === 'radio' ? 'radio' : 'textbox';
+    const cell = el.closest('td, th');
+    let near = cell && cell.previousElementSibling ? clean(cell.previousElementSibling.innerText) : '';
+    if (!near) { const row = el.closest('tr'); near = row ? clean(row.innerText) : ''; }
+    out.push({ role, near: near.slice(0, 40), css: cssPath(el) });
+  }
+  return out;
+}
+"""
+)
+
+
+def unnamed_controls(page) -> list[dict]:
+    """Fields the accessibility tree cannot name: [{role, near, css}, ...] across all frames."""
+    found = []
+    for frame in page.frames:
+        try:
+            found += frame.evaluate(_UNNAMED_JS)
+        except PlaywrightError:
+            continue  # frame is navigating or was removed
+    return found
+
+
+def format_unnamed_controls(controls: list[dict]) -> str:
+    """Text block for the observation. Empty string when there is nothing to report."""
+    if not controls:
+        return ""
+    lines = ["Fields with no accessible name (target these with css):"]
+    for c in controls:
+        near = f' next to "{c["near"]}"' if c["near"] else ""
+        lines.append(f'- {c["role"]}{near}: css={c["css"]}')
+    return "\n".join(lines)
+
+
+# ------------------------------------------------------------ describe_element
 
 # First line of an element's aria snapshot looks like:  - button "Search"
 _ARIA_FIRST_LINE = re.compile(r'^- ([A-Za-z]+)(?: "((?:[^"\\]|\\.)*)")?')

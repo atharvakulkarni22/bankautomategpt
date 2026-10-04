@@ -14,7 +14,7 @@ class GeminiClient:
         self.model = model
         self.client = client
 
-    def complete(self, system, messages, tools=None, max_tokens=None):
+    def complete(self, system, messages, tools=None, max_tokens=None, force_tool=None):
         config = types.GenerateContentConfig(system_instruction=system)
         if max_tokens:
             config.max_output_tokens = max_tokens
@@ -24,6 +24,10 @@ class GeminiClient:
                 for t in tools
             ]
             config.tools = [types.Tool(function_declarations=declarations)]
+            if force_tool:
+                config.tool_config = types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[force_tool])
+                )
         response = self.client.models.generate_content(
             model=self.model, contents=self._contents(messages), config=config
         )
@@ -60,5 +64,7 @@ class GeminiClient:
                 else:
                     out.append(types.Content(role="user", parts=[part]))
             else:
-                out.append(types.Content(role="user", parts=[types.Part(text=m.text)]))
+                parts = [types.Part(text=m.text)]
+                parts += [types.Part.from_bytes(data=png, mime_type="image/png") for png in m.images]
+                out.append(types.Content(role="user", parts=parts))
         return out

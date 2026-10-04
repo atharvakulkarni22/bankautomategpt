@@ -8,6 +8,8 @@ from lba.surface import (
     SurfaceError,
     Target,
     TargetNotFound,
+    UnknownPlaceholder,
+    Values,
     resolve,
 )
 
@@ -78,6 +80,55 @@ def test_observe_includes_iframe_content_and_screenshot(home):
     assert "Member ID" in seen.tree and 'button "Search"' in seen.tree  # inside the iframe
     assert "[ref=" not in seen.tree  # noise removed
     assert seen.screenshot.startswith(b"\x89PNG")
+
+
+def test_observe_lists_fields_the_tree_cannot_name(home):
+    tree = home.observe().tree
+    assert "Fields with no accessible name (target these with css):" in tree
+    assert '- textbox next to "Member ID": css=input[name="mid"]' in tree
+    # ...and that css really works as a Target.
+    home.type(Target(css='input[name="mid"]'), "1004")
+    assert home.read(MEMBER_ID_BOX) == "1004"
+
+
+def test_observe_has_no_unnamed_section_when_every_field_is_named(surface, bank_url):
+    surface.goto(f"{bank_url}/login?popup=0")
+    tree = surface.observe().tree
+    assert 'css=input[name="pw"]' in tree  # the password box has no <label>
+    assert 'css=input[name="user"]' not in tree  # the user name box has one
+
+
+# ------------------------------------------------------- placeholders in the surface
+
+
+def test_type_swaps_placeholders_for_real_values(bank_url):
+    values = Values(inputs={"member_id": "1003"}, secrets={"BANK_USER": BANK_USER, "BANK_PASSWORD": BANK_PASSWORD})
+    with BrowserSurface(timeout_ms=3000, values=values) as surface:
+        surface.goto(f"{bank_url}/login")
+        surface.type(Target(css="input[name=user]"), "{{secret:BANK_USER}}")
+        surface.type(Target(css="input[name=pw]"), "{{secret:BANK_PASSWORD}}")
+        surface.click(Target(role="button", name="Sign On"))
+        surface.wait_for(Target(role="link", name="Sign Off"))
+        surface.type(MEMBER_ID_BOX, "{{member_id}}")
+        assert surface.read(MEMBER_ID_BOX) == "1003"
+
+
+def test_unknown_placeholder_fails_before_touching_the_page(bank_url):
+    values = Values(inputs={}, secrets={"BANK_USER": BANK_USER})
+    with BrowserSurface(timeout_ms=3000, values=values) as surface:
+        surface.goto(f"{bank_url}/login")
+        with pytest.raises(UnknownPlaceholder):
+            surface.type(Target(css="input[name=pw]"), "{{secret:BANK_PASSWORD}}")
+        assert surface.read(Target(css="input[name=pw]")) == ""  # nothing was typed
+
+
+def test_values_read_from_the_page_are_scrubbed_of_secrets(bank_url):
+    values = Values(secrets={"BANK_USER": BANK_USER})
+    with BrowserSurface(timeout_ms=3000, values=values) as surface:
+        surface.goto(f"{bank_url}/login")
+        surface.type(Target(css="input[name=user]"), BANK_USER)  # typed literally, on purpose
+        assert surface.read(Target(css="input[name=user]")) == "{{secret:BANK_USER}}"
+        assert BANK_USER not in surface.observe().tree
 
 
 # ------------------------------------------------------------------ the actions

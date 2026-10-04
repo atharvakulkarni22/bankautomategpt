@@ -87,6 +87,44 @@ def test_anthropic_request_and_reply():
     assert reply.tool_calls == [ToolCall("t1", "click", {"label": "OK"})]
 
 
+def anthropic_call(model, **options):
+    """Run one complete() against a fake SDK and return what was sent."""
+    seen = {}
+
+    def create(**kwargs):
+        seen.update(kwargs)
+        return NS(content=[], stop_reason="end_turn")
+
+    client = AnthropicClient(model, client=NS(messages=NS(create=create)), effort=options.pop("effort", None))
+    client.complete("sys", [Message("user", "look", images=[b"PNGDATA"])], tools=[TOOL], force_tool="click")
+    return seen
+
+
+def test_anthropic_sends_images_and_forces_the_tool_where_allowed():
+    sent = anthropic_call("claude-sonnet-5")  # an older model that still allows forced tool use
+    assert sent["tool_choice"] == {"type": "tool", "name": "click"}
+    image, text = sent["messages"][0]["content"]
+    assert image["type"] == "image" and image["source"]["media_type"] == "image/png"
+    assert image["source"]["data"] == "UE5HREFUQQ=="  # base64 of PNGDATA
+    assert text == {"type": "text", "text": "look"}
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1"])
+def test_anthropic_skips_forced_tool_on_models_that_reject_it(model):
+    assert "tool_choice" not in anthropic_call(model)  # these answer HTTP 400 to a forced tool choice
+
+
+def test_anthropic_effort_is_optional():
+    assert "output_config" not in anthropic_call("claude-sonnet-5-5")
+    assert anthropic_call("claude-sonnet-5-5", effort="low")["output_config"] == {"effort": "low"}
+
+
+def test_factory_passes_effort_to_anthropic():
+    env = {"LBA_PROVIDER": "anthropic", "LBA_MODEL": "m", "ANTHROPIC_API_KEY": "k", "LBA_EFFORT": " low "}
+    assert get_client(env=env).effort == "low"
+    assert get_client(env={**env, "LBA_EFFORT": ""}).effort is None
+
+
 # ---------------------------------------------------------------------- openai
 
 
@@ -109,6 +147,21 @@ def test_openai_request_and_reply():
     assert [m["role"] for m in seen["messages"][3:]] == ["tool", "tool"]
     assert reply.tool_calls == [ToolCall("t1", "click", {"label": "OK"})]
     assert reply.text == ""
+
+
+def test_openai_sends_images_and_forces_the_tool():
+    seen = {}
+
+    def create(**kwargs):
+        seen.update(kwargs)
+        return NS(choices=[NS(message=NS(content="ok", tool_calls=None), finish_reason="stop")])
+
+    client = OpenAIClient("gpt-x", client=NS(chat=NS(completions=NS(create=create))))
+    client.complete("sys", [Message("user", "look", images=[b"PNGDATA"])], tools=[TOOL], force_tool="click")
+    assert seen["tool_choice"] == {"type": "function", "function": {"name": "click"}}
+    text, image = seen["messages"][1]["content"]
+    assert text == {"type": "text", "text": "look"}
+    assert image["image_url"]["url"] == "data:image/png;base64,UE5HREFUQQ=="
 
 
 # ---------------------------------------------------------------------- gemini
@@ -141,6 +194,22 @@ def test_gemini_request_and_reply():
     assert reply.text == "hi"  # the "thought" part is not shown as text
     assert reply.tool_calls[0].name == "click" and reply.tool_calls[0].arguments == {"label": "OK"}
     assert reply.raw is content
+
+
+def test_gemini_sends_images_and_forces_the_tool():
+    seen = {}
+
+    def generate_content(**kwargs):
+        seen.update(kwargs)
+        return NS(candidates=[NS(content=types.Content(role="model", parts=[types.Part(text="ok")]), finish_reason="STOP")])
+
+    client = GeminiClient("gemini-x", client=NS(models=NS(generate_content=generate_content)))
+    client.complete("sys", [Message("user", "look", images=[b"PNGDATA"])], tools=[TOOL], force_tool="click")
+    mode = seen["config"].tool_config.function_calling_config
+    assert str(mode.mode).endswith("ANY") and mode.allowed_function_names == ["click"]
+    text_part, image_part = seen["contents"][0].parts
+    assert text_part.text == "look"
+    assert image_part.inline_data.data == b"PNGDATA" and image_part.inline_data.mime_type == "image/png"
 
 
 def test_gemini_resends_its_own_reply_unchanged():

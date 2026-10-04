@@ -11,20 +11,23 @@ It says nothing about HOW to find the element. That is the surface's job, so the
 same Target can be stored in an artifact and used later without an LLM.
 """
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Target(BaseModel):
+    """One element on the page. Set exactly one of role, label, text or css."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)  # frozen = hashable, safe to compare
 
-    role: str | None = None
-    name: str | None = None  # only together with role
-    label: str | None = None
-    text: str | None = None
-    css: str | None = None
+    # The descriptions below are shown to the AI (they end up in its tool schema).
+    role: str | None = Field(None, description="Accessibility role, e.g. button, link, textbox, heading, combobox. Use with name.")
+    name: str | None = Field(None, description="Accessible name of the element, as shown in the tree. Only together with role.")
+    label: str | None = Field(None, description="Text of the field's <label>.")
+    text: str | None = Field(None, description="Visible text of the element.")
+    css: str | None = Field(None, description="CSS selector. Last resort; use the ones listed for fields with no accessible name.")
     # True = whole-text match; False (default) = substring, ignoring case.
     # Applies to name, label and text; css ignores it.
-    exact: bool = False
+    exact: bool = Field(False, description="True: match the whole name/label/text. False: substring match.")
 
     @model_validator(mode="after")
     def _exactly_one_strategy(self):
