@@ -10,6 +10,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from bag.safety import Redactor
+
 DEFAULT_DIR = Path("evidence/recordings")
 
 
@@ -18,7 +20,10 @@ def _now() -> str:
 
 
 class Recorder:
-    def __init__(self, goal, input_names, start_url, model, directory=DEFAULT_DIR):
+    def __init__(self, goal, input_names, start_url, model, directory=DEFAULT_DIR, redactor=None):
+        # Everything written to the file goes through the redactor: secrets removed, account
+        # numbers masked. A recording must never become a second copy of customer data.
+        self.redactor = redactor or Redactor()
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")[:40] or "run"
@@ -26,9 +31,9 @@ class Recorder:
         self.path = directory / f"{stamp}-{slug}.json"
         self.data = {
             "version": 1,
-            "goal": goal,
+            "goal": self.redactor.text(goal),
             "inputs": sorted(input_names),  # names only, never values
-            "start_url": start_url,
+            "start_url": self.redactor.text(start_url),
             "model": model,
             "started_at": _now(),
             "finished_at": None,
@@ -53,11 +58,12 @@ class Recorder:
         }
         if raw is not None:
             step["raw"] = raw
-        self.data["steps"].append(step)
+        self.data["steps"].append(self.redactor.data(step))
         self._save()
 
     def finish(self, stop_reason, outputs, message=""):
-        self.data.update(finished_at=_now(), stop_reason=stop_reason, outputs=dict(outputs), message=message)
+        self.data.update(finished_at=_now(), stop_reason=stop_reason, outputs=self.redactor.data(dict(outputs)),
+                         message=self.redactor.text(message))
         self._save()
 
     def _save(self):

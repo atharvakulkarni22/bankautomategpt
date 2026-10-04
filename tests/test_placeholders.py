@@ -1,7 +1,7 @@
 import pytest
 
-from lba.surface import UnknownPlaceholder, Values
-from lba.surface.placeholders import DEFAULT_SECRET_NAMES, secret_names_from_env
+from bag.surface import UnknownPlaceholder, Values
+from bag.surface.placeholders import DEFAULT_SECRET_NAMES, secret_names_from_env
 
 SECRETS = {"BANK_USER": "teller-xyz", "BANK_PASSWORD": "hunter2-pw", "ANTHROPIC_API_KEY": "sk-not-for-pages"}
 
@@ -37,7 +37,7 @@ def test_only_allow_listed_secrets_can_be_requested():
 
 def test_allow_list_comes_from_the_environment():
     assert secret_names_from_env({}) == DEFAULT_SECRET_NAMES
-    assert secret_names_from_env({"LBA_SECRET_NAMES": " A , B ,"}) == ("A", "B")
+    assert secret_names_from_env({"BAG_SECRET_NAMES": " A , B ,"}) == ("A", "B")
     values = Values(secrets={"A": "value-a", "BANK_USER": "x"}, secret_names=["A"])
     assert values.secret_names == ["A"]
 

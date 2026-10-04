@@ -2,7 +2,7 @@ import pytest
 from conftest import BANK_PASSWORD, BANK_USER
 from pydantic import ValidationError
 
-from lba.surface import (
+from bag.surface import (
     AmbiguousTarget,
     BrowserSurface,
     SurfaceError,

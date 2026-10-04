@@ -2,15 +2,15 @@ import json
 from decimal import Decimal
 
 import pytest
-from conftest import BANK_PASSWORD, BANK_USER
+from conftest import BANK_PASSWORD, BANK_USER, StubGuard
 from typer.testing import CliRunner
 
-from lba import safety
-from lba.agent import Recorder, run_discovery
-from lba.artifact import Artifact, approve_artifact, build_artifact, load_artifact, save_artifact
-from lba.artifact.builder import default_interruptions, default_outcomes
-from lba.cli import app
-from lba.replay import (
+from bag.safety import Decision, Guard, SafetyConfig
+from bag.agent import Recorder, run_discovery
+from bag.artifact import Artifact, approve_artifact, build_artifact, load_artifact, save_artifact
+from bag.artifact.builder import default_interruptions, default_outcomes
+from bag.cli import app
+from bag.replay import (
     BUSINESS_OUTCOME,
     FAILURE,
     SUCCESS,
@@ -21,8 +21,8 @@ from lba.replay import (
     prepare_run,
     resolve_start_url,
 )
-from lba.replay.errors import LocatorNotFound, UnexpectedState
-from lba.surface import (
+from bag.replay.errors import LocatorNotFound, UnexpectedState
+from bag.surface import (
     AmbiguousTarget,
     BrowserSurface,
     Observation,
@@ -61,6 +61,7 @@ class FakeSurface:
         self.present, self.texts = set(), set()
         self.reads, self.on_click, self.errors = {}, {}, {}
         self.actions, self.pauses, self.gone_to = [], [], []
+        self.frames = []  # addresses loaded in iframes
         self.goto_error = None
 
     def goto(self, url):
@@ -79,6 +80,9 @@ class FakeSurface:
 
     def current_url(self):
         return self.url
+
+    def frame_urls(self):
+        return list(self.frames)
 
     def pause(self, seconds):
         self.pauses.append(seconds)
@@ -123,6 +127,7 @@ def make_artifact(steps, *, status="approved", inputs=(), outputs=(), **rest):
 
 def replayer(artifact, surface, clock, tmp_path, **options):
     options.setdefault("timeout_s", 10.0)
+    options.setdefault("guard", StubGuard())
     return Replayer(artifact, surface, clock=clock.time, sleep=clock.sleep, screenshot_dir=tmp_path, **options)
 
 
@@ -160,7 +165,7 @@ def input_artifact(status="approved", **changes):
 
 
 def test_prepare_refuses_anything_not_approved():
-    with pytest.raises(ReplayRefused, match="not approved.*lba approve demo"):
+    with pytest.raises(ReplayRefused, match="not approved.*bag approve demo"):
         prepare_run(input_artifact(status="draft"), {"member_id": "1001", "amount": "5"}, ["BANK_PASSWORD"])
 
 
@@ -295,7 +300,7 @@ def test_other_errors_are_not_retried(surface, clock, tmp_path):
 def test_backoff_uses_the_surface_pause_by_default(surface, tmp_path):
     surface.errors[("click", GO)] = [SurfaceTimeout("slow")]
     clock = FakeClock()
-    result = Replayer(make_artifact([click_go]), surface, clock=clock.time, screenshot_dir=tmp_path).run()
+    result = Replayer(make_artifact([click_go]), surface, guard=StubGuard(), clock=clock.time, screenshot_dir=tmp_path).run()
     assert result.status == SUCCESS and surface.pauses == [0.5]
 
 
@@ -410,8 +415,8 @@ def test_a_value_that_does_not_fit_its_type_fails_without_echoing_it(surface, cl
 
 
 def test_safety_can_block_a_step(surface, clock, tmp_path):
-    no = lambda step: safety.Verdict(False, "money movement needs approval")
-    result = replayer(make_artifact([click_go]), surface, clock, tmp_path, safety_check=no).run()
+    guard = StubGuard(Decision.BLOCK, "money movement needs approval")
+    result = replayer(make_artifact([click_go]), surface, clock, tmp_path, guard=guard).run()
     assert result.failure.error == "SafetyBlocked" and result.failure.step == 1
     assert "money movement needs approval" in result.failure.observed
     assert surface.actions == []
@@ -454,11 +459,17 @@ def real_artifact(status="approved", **changes):
     return Artifact.model_validate(data)
 
 
+def real_guard(bank_url):
+    """The real guard with the bank as the only allowed site, and nobody to ask for approval."""
+    return Guard(SafetyConfig(allowed_urls=[bank_url]), approver=lambda request: False)
+
+
 def replay_for_real(artifact, bank_url, tmp_path, member_id="1001", path="/login"):
     secrets = Values(secrets=REAL_SECRETS)
     clean = prepare_run(artifact, {"member_id": member_id}, secrets.secret_names)
     with BrowserSurface(timeout_ms=3000, values=Values(inputs=clean, secrets=REAL_SECRETS)) as surface:
-        return Replayer(artifact, surface, start_url=bank_url + path, timeout_s=3, screenshot_dir=tmp_path).run()
+        return Replayer(artifact, surface, guard=real_guard(bank_url), start_url=bank_url + path, timeout_s=3,
+                        screenshot_dir=tmp_path).run()
 
 
 @pytest.mark.parametrize(
@@ -542,7 +553,8 @@ def test_learn_once_with_the_agent_then_replay_for_another_member(bank_url, tmp_
     values = Values(inputs={"member_id": "1001"}, secrets=REAL_SECRETS)
     recorder = Recorder("Look up a member", ["member_id"], bank_url + "/", "fake", tmp_path / "recordings")
     with BrowserSurface(timeout_ms=4000, values=values) as surface:
-        found = run_discovery("Look up a member", surface, ScriptedLLM(script), recorder, values, bank_url + "/")
+        found = run_discovery("Look up a member", surface, ScriptedLLM(script), recorder, values, bank_url + "/",
+                              guard=real_guard(bank_url))
     assert found.stop_reason == "done" and found.outputs["member_name"] == "Priya Sharma"
 
     # 2. Build the artifact, save it, review it (approve).
@@ -570,12 +582,17 @@ def cli(tmp_path, monkeypatch, bank_url):
     monkeypatch.setenv("BANK_URL", bank_url)  # the artifact remembers 127.0.0.1:5000; this is where the bank really is
     folder = tmp_path / "artifacts"
     save_artifact(real_artifact(), folder, values=Values(secrets=REAL_SECRETS))
+    # The shipped config allows port 5000 only; the test bank is on a free port, so write its own rules.
+    rules = tmp_path / "safety.yaml"
+    rules.write_text(f"allowed_urls:\n  - {bank_url}\nrisky_button_names: [confirm]\naudit_log: {tmp_path / 'audit.jsonl'}\n",
+                     encoding="utf-8")
 
     def run(*args):
-        return CliRunner().invoke(app, ["replay", *args, "--artifacts-dir", str(folder),
-                                        "--screenshot-dir", str(tmp_path / "shots"), "--timeout", "3"])
+        return CliRunner().invoke(app, ["replay", "--artifacts-dir", str(folder),
+                                        "--screenshot-dir", str(tmp_path / "shots"), "--timeout", "3",
+                                        "--safety-config", str(rules), *args])  # later options win
 
-    run.folder, run.shots = folder, tmp_path / "shots"
+    run.folder, run.shots, run.rules, run.audit = folder, tmp_path / "shots", rules, tmp_path / "audit.jsonl"
     return run
 
 

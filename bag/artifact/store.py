@@ -10,15 +10,15 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from lba.surface.placeholders import Values
+from bag.surface.placeholders import Values
 
 from .schema import Artifact
 
 DEFAULT_DIR = Path("artifacts")
 FILE_NAME = re.compile(r"^(?P<name>[a-z0-9][a-z0-9_-]*)\.v(?P<version>\d+)\.yaml$")
 HEADER = (
-    "# lba artifact: a saved, reusable task. Safe to edit by hand; it is checked every time it loads.\n"
-    "# status draft = not yet reviewed. Run `lba approve <name>` once you have read it through.\n"
+    "# bag artifact: a saved, reusable task. Safe to edit by hand; it is checked every time it loads.\n"
+    "# status draft = not yet reviewed. Run `bag approve <name>` once you have read it through.\n"
     "# Secrets appear only as {{secret:NAME}} placeholders, never as real values.\n"
 )
 
@@ -128,7 +128,7 @@ def resolve_artifact_path(ref: str, directory=DEFAULT_DIR) -> Path:
     versions = _versions(directory, ref)
     if versions:
         return artifact_path(directory, ref, versions[-1])
-    raise ArtifactError(f"No artifact '{ref}' found in {directory}. Run `lba list` to see what exists.")
+    raise ArtifactError(f"No artifact '{ref}' found in {directory}. Run `bag list` to see what exists.")
 
 
 def approve_artifact(path) -> Artifact:

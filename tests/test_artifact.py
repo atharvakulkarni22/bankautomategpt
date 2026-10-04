@@ -5,7 +5,7 @@ import yaml
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from lba.artifact import (
+from bag.artifact import (
     Artifact,
     ArtifactError,
     BuildError,
@@ -21,8 +21,8 @@ from lba.artifact import (
     resolve_artifact_path,
     save_artifact,
 )
-from lba.cli import app
-from lba.surface import Target, Values
+from bag.cli import app
+from bag.surface import Target, Values
 
 SECRETS = {"BANK_USER": "teller-xyz", "BANK_PASSWORD": "hunter2-pw"}
 
@@ -306,7 +306,7 @@ def test_nothing_to_build_from_is_an_error():
 
 
 def test_default_name_comes_from_the_goal():
-    from lba.artifact import default_name
+    from bag.artifact import default_name
 
     assert default_name({"goal": "Log in and find the savings balance for the member"}) == "log-in-and-find-the-savings-balance-for"
     assert default_name({"goal": "!!!"}) == "task"
@@ -332,7 +332,7 @@ def test_save_writes_yaml_that_loads_back_identically(tmp_path):
     path = save_artifact(artifact, tmp_path, values=Values(secrets=SECRETS))
     assert path == tmp_path / "member-balance.v1.yaml"
     text = path.read_text(encoding="utf-8")
-    assert text.startswith("# lba artifact")
+    assert text.startswith("# bag artifact")
     assert "exact: false" not in text and "null" not in text  # tidy: no defaults or nulls
     assert "{{secret:BANK_USER}}" in text and "teller-xyz" not in text
     assert yaml.safe_load(text)["metadata"]["status"] == "draft"
@@ -409,7 +409,7 @@ def test_approve_changes_only_the_status(tmp_path):
 
 @pytest.fixture
 def cli(tmp_path, monkeypatch):
-    """Run lba commands against a temp folder, with no real .env and fake secrets."""
+    """Run bag commands against a temp folder, with no real .env and fake secrets."""
     monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
     for name, value in SECRETS.items():
         monkeypatch.setenv(name, value)
@@ -432,7 +432,7 @@ def test_build_list_approve_end_to_end(cli):
     built = cli("build", str(cli.recording), "--name", "member-balance")
     assert built.exit_code == 0, built.output
     assert "Built member-balance v1 (draft): 9 step(s), 1 input(s), 2 output(s)." in built.output
-    assert "lba approve member-balance" in built.output
+    assert "bag approve member-balance" in built.output
     assert (cli.folder / "member-balance.v1.yaml").exists()
 
     listing = cli("list").output

@@ -1,6 +1,6 @@
 """Provider-neutral LLM access. Use get_client(); never import an SDK elsewhere.
 
-Only discovery (lba/agent) may use this package. Replay must never import it.
+Only discovery (bag/agent) may use this package. Replay must never import it.
 """
 
 from .base import LLMClient, LLMResponse, Message, ToolCall, ToolSpec

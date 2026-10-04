@@ -2,8 +2,8 @@ import re
 
 import pytest
 
-from lba.bankapp import app as bank_module
-from lba.bankapp.app import create_app
+from bag.bankapp import app as bank_module
+from bag.bankapp.app import create_app
 
 USER = "teller-test"
 PASSWORD = "not-a-real-password"

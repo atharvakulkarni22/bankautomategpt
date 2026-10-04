@@ -69,6 +69,10 @@ class Surface(Protocol):
 
     def current_url(self) -> str: ...
 
+    def frame_urls(self) -> list[str]:
+        """Addresses loaded inside iframes. The safety guard checks them against its allowlist."""
+        ...
+
     def pause(self, seconds: float) -> None:
         """Wait, while still letting the app run (a plain time.sleep can stall a browser)."""
         ...

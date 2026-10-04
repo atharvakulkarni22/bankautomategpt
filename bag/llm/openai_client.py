@@ -1,6 +1,6 @@
 """Adapter for OpenAI, and for ANY server that speaks the OpenAI chat format.
 
-Set LBA_BASE_URL to reach those: Ollama, LM Studio, OpenRouter, Groq, Together,
+Set BAG_BASE_URL to reach those: Ollama, LM Studio, OpenRouter, Groq, Together,
 vLLM and many others all offer an OpenAI-compatible endpoint. This one adapter is
 how the project supports "any other LLM".
 """

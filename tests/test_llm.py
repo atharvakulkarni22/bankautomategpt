@@ -6,10 +6,10 @@ from types import SimpleNamespace as NS
 import pytest
 from google.genai import types
 
-from lba.llm import LLMConfigError, Message, ToolCall, ToolSpec, get_client
-from lba.llm.anthropic_client import AnthropicClient
-from lba.llm.gemini_client import GeminiClient
-from lba.llm.openai_client import OpenAIClient
+from bag.llm import LLMConfigError, Message, ToolCall, ToolSpec, get_client
+from bag.llm.anthropic_client import AnthropicClient
+from bag.llm.gemini_client import GeminiClient
+from bag.llm.openai_client import OpenAIClient
 
 TOOL = ToolSpec("click", "Click a button", {"type": "object", "properties": {"label": {"type": "string"}}})
 CALL = ToolCall("c1", "click", {"label": "OK"})
@@ -30,16 +30,16 @@ def history():
 
 
 def test_factory_picks_each_provider():
-    anthropic = get_client(env={"LBA_PROVIDER": "anthropic", "LBA_MODEL": "m", "ANTHROPIC_API_KEY": "k"})
-    gemini = get_client(env={"LBA_PROVIDER": "gemini", "LBA_MODEL": "m", "GEMINI_API_KEY": "k"})
-    openai = get_client(env={"LBA_PROVIDER": "openai", "LBA_MODEL": "m", "OPENAI_API_KEY": "k"})
+    anthropic = get_client(env={"BAG_PROVIDER": "anthropic", "BAG_MODEL": "m", "ANTHROPIC_API_KEY": "k"})
+    gemini = get_client(env={"BAG_PROVIDER": "gemini", "BAG_MODEL": "m", "GEMINI_API_KEY": "k"})
+    openai = get_client(env={"BAG_PROVIDER": "openai", "BAG_MODEL": "m", "OPENAI_API_KEY": "k"})
     assert isinstance(anthropic, AnthropicClient)
     assert isinstance(gemini, GeminiClient)
     assert isinstance(openai, OpenAIClient)
 
 
 def test_factory_defaults_to_anthropic_and_arguments_win():
-    env = {"LBA_MODEL": "m", "ANTHROPIC_API_KEY": "k", "GEMINI_API_KEY": "k"}
+    env = {"BAG_MODEL": "m", "ANTHROPIC_API_KEY": "k", "GEMINI_API_KEY": "k"}
     assert isinstance(get_client(env=env), AnthropicClient)
     assert isinstance(get_client(provider="gemini", env=env), GeminiClient)
 
@@ -47,10 +47,10 @@ def test_factory_defaults_to_anthropic_and_arguments_win():
 @pytest.mark.parametrize(
     "env, message",
     [
-        ({"LBA_PROVIDER": "bogus", "LBA_MODEL": "m"}, "Unknown LBA_PROVIDER"),
-        ({"LBA_PROVIDER": "gemini"}, "LBA_MODEL is not set"),
-        ({"LBA_PROVIDER": "gemini", "LBA_MODEL": "m"}, "GEMINI_API_KEY is not set"),
-        ({"LBA_PROVIDER": "openai", "LBA_MODEL": "m"}, "OPENAI_API_KEY is not set"),
+        ({"BAG_PROVIDER": "bogus", "BAG_MODEL": "m"}, "Unknown BAG_PROVIDER"),
+        ({"BAG_PROVIDER": "gemini"}, "BAG_MODEL is not set"),
+        ({"BAG_PROVIDER": "gemini", "BAG_MODEL": "m"}, "GEMINI_API_KEY is not set"),
+        ({"BAG_PROVIDER": "openai", "BAG_MODEL": "m"}, "OPENAI_API_KEY is not set"),
     ],
 )
 def test_factory_gives_clear_errors(env, message):
@@ -59,7 +59,7 @@ def test_factory_gives_clear_errors(env, message):
 
 
 def test_openai_compatible_server_needs_no_key():
-    env = {"LBA_PROVIDER": "openai", "LBA_MODEL": "llama3", "LBA_BASE_URL": "http://localhost:11434/v1"}
+    env = {"BAG_PROVIDER": "openai", "BAG_MODEL": "llama3", "BAG_BASE_URL": "http://localhost:11434/v1"}
     client = get_client(env=env)
     assert str(client.client.base_url).startswith("http://localhost:11434/v1")
 
@@ -120,9 +120,9 @@ def test_anthropic_effort_is_optional():
 
 
 def test_factory_passes_effort_to_anthropic():
-    env = {"LBA_PROVIDER": "anthropic", "LBA_MODEL": "m", "ANTHROPIC_API_KEY": "k", "LBA_EFFORT": " low "}
+    env = {"BAG_PROVIDER": "anthropic", "BAG_MODEL": "m", "ANTHROPIC_API_KEY": "k", "BAG_EFFORT": " low "}
     assert get_client(env=env).effort == "low"
-    assert get_client(env={**env, "LBA_EFFORT": ""}).effort is None
+    assert get_client(env={**env, "BAG_EFFORT": ""}).effort is None
 
 
 # ---------------------------------------------------------------------- openai
@@ -222,20 +222,20 @@ def test_gemini_resends_its_own_reply_unchanged():
 
 
 def test_replay_never_imports_the_llm_layer():
-    # lba.artifact is included: replay depends on it, so it must stay free of the LLM too.
-    code = "import sys, lba.replay, lba.artifact; sys.exit(any(m.startswith(('lba.llm', 'lba.agent', 'anthropic', 'openai', 'google.genai')) for m in sys.modules))"
+    # bag.artifact is included: replay depends on it, so it must stay free of the LLM too.
+    code = "import sys, bag.replay, bag.artifact; sys.exit(any(m.startswith(('bag.llm', 'bag.agent', 'anthropic', 'openai', 'google.genai')) for m in sys.modules))"
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0
 
 
 def test_the_replay_command_never_loads_the_llm_either():
-    """Run the real CLI entry point for `lba replay` and check what ended up imported."""
+    """Run the real CLI entry point for `bag replay` and check what ended up imported."""
     code = """
 import sys
 from typer.testing import CliRunner
-from lba.cli import app
+from bag.cli import app
 
 CliRunner().invoke(app, ['replay', 'no-such-artifact'])  # refuses early, after all its imports ran
-loaded = [m for m in sys.modules if m.startswith(('lba.llm', 'lba.agent', 'anthropic', 'openai', 'google.genai'))]
+loaded = [m for m in sys.modules if m.startswith(('bag.llm', 'bag.agent', 'anthropic', 'openai', 'google.genai'))]
 sys.exit(1 if loaded else 0)
 """
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0

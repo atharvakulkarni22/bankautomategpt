@@ -4,6 +4,9 @@ Nothing here is clever. Every decision was made earlier, by the agent and by the
 human who approved the artifact. The engine just carries the steps out carefully,
 and when something is off it stops and says exactly what and where.
 
+Before every action the guard decides ALLOW / NEEDS_APPROVAL / BLOCK, and everything
+written to the log or to a failure report passes through the redactor first.
+
 Retries and fallbacks are different things:
 
     FALLBACK  Same moment, same action, DIFFERENT way of finding the element.
@@ -16,6 +19,7 @@ Retries and fallbacks are different things:
 
 import logging
 import time
+from types import SimpleNamespace
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,10 +27,10 @@ from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-from lba import safety
-from lba.artifact import Artifact, Locator, Step
-from lba.surface import Surface, SurfaceError, Target, TargetNotFound
-from lba.surface.placeholders import PLACEHOLDER
+from bag.artifact import Artifact, Locator, Step
+from bag.safety import Decision, PageContext, Redactor
+from bag.surface import Surface, SurfaceError, Target, TargetNotFound
+from bag.surface.placeholders import PLACEHOLDER
 
 from .errors import (
     BusinessOutcome,
@@ -39,7 +43,7 @@ from .errors import (
     classify,
 )
 
-logger = logging.getLogger("lba.replay")
+logger = logging.getLogger("bag.replay")
 
 SUCCESS = "SUCCESS"
 BUSINESS_OUTCOME = "BUSINESS_OUTCOME"
@@ -97,7 +101,7 @@ def prepare_run(artifact: Artifact, raw_inputs: Mapping[str, str], available_sec
     if meta.status != "approved":
         raise ReplayRefused(
             f"{meta.name} v{meta.version} is '{meta.status}', not approved. "
-            f"Read it through, then run `lba approve {meta.name}`."
+            f"Read it through, then run `bag approve {meta.name}`."
         )
 
     declared = {i.name: i for i in artifact.inputs}
@@ -119,7 +123,7 @@ def prepare_run(artifact: Artifact, raw_inputs: Mapping[str, str], available_sec
     absent = sorted(needed - available)
     if absent:
         raise ReplayRefused(
-            f"Secret(s) not available: {', '.join(absent)}. Set them in .env (and list them in LBA_SECRET_NAMES if custom)."
+            f"Secret(s) not available: {', '.join(absent)}. Set them in .env (and list them in BAG_SECRET_NAMES if custom)."
         )
     return clean
 
@@ -147,12 +151,13 @@ class Replayer:
         artifact: Artifact,
         surface: Surface,
         *,
+        guard,
+        redactor: Redactor | None = None,
         start_url: str | None = None,
         timeout_s: float = 10.0,
         max_retries: int = 2,
         backoff_s: float = 0.5,
         max_interruptions: int = 10,
-        safety_check=safety.check,
         clock=time.monotonic,
         sleep=None,
         screenshot_dir: Path = DEFAULT_SCREENSHOT_DIR,
@@ -164,7 +169,10 @@ class Replayer:
         self.max_retries = max_retries
         self.backoff_s = backoff_s
         self.max_interruptions = max_interruptions
-        self.safety_check = safety_check
+        # The guard (bag.safety.Guard) rules on every action. There is no default: a replay
+        # without a guard must be a loud mistake, not a quiet one.
+        self.guard = guard
+        self.redactor = redactor or Redactor()  # scrubs every log line and failure report
         self.clock = clock
         self.sleep = sleep or surface.pause
         self.screenshot_dir = Path(screenshot_dir)
@@ -182,17 +190,21 @@ class Replayer:
         started = self.clock()
         name = f"{self.artifact.metadata.name} v{self.artifact.metadata.version}"
         try:
+            start = self.guard.check_url(self.start_url)  # the browser may only start on an allowed site
+            if start.decision is not Decision.ALLOW:
+                raise SafetyBlocked("The start page was blocked by a safety rule.",
+                                    expected="a start page on the allowlist", observed=start.reason)
             self.surface.goto(self.start_url)
             for number, step in enumerate(self.artifact.steps, start=1):
                 self._phase, self._step_number, self._action = "step", number, step.action
                 self._run_step(number, step)
             self._phase, self._step_number, self._action = "finish", None, None
-            self._guard(None)  # a popup or "No member found" may appear after the last step
+            self._watch(None)  # a popup or "No member found" may appear after the last step
             self._success_check()
             outputs = self._cast_outputs()
         except BusinessOutcome as outcome:
             self._log(self._step_number, "step", f"ended with business outcome {outcome.code}")
-            return RunResult(BUSINESS_OUTCOME, name, outcome_code=outcome.code, message=str(outcome),
+            return RunResult(BUSINESS_OUTCOME, name, outcome_code=outcome.code, message=self.redactor.text(str(outcome)),
                              log=self.log, seconds=self.clock() - started)
         except (SurfaceError, ReplayError) as error:
             problem = classify(error)
@@ -202,17 +214,12 @@ class Replayer:
     # ----------------------------------------------------------------- steps
 
     def _run_step(self, number: int, step: Step) -> None:
-        verdict = self.safety_check(step)
-        if not verdict.allowed:
-            raise SafetyBlocked(
-                f"Step {number} ({step.action}) was blocked by a safety rule: {verdict.reason}",
-                expected="the step to be allowed", observed=verdict.reason or "blocked",
-            )
+        self._authorize(number, step, step.locator)
 
         retries = 0
         while True:
             try:
-                self._guard(number)
+                self._watch(number)
                 target, matched = self._locate(number, step.locator, f"step {number} ({step.action})")
                 self._act(step, target)
                 self._verify_expected(number, step)
@@ -227,11 +234,25 @@ class Replayer:
                     self.sleep(delay)
                     retries += 1
                     continue
-                if isinstance(problem, LocatorNotFound) and self._guard(number):
+                if isinstance(problem, LocatorNotFound) and self._watch(number):
                     continue  # a popup was in the way: it is gone now, so look again
                 if problem is error:
                     raise
                 raise problem from error
+
+    def _authorize(self, number: int | None, action, locator: Locator, what: str | None = None) -> None:
+        """Ask the guard whether this action may happen. Raises SafetyBlocked unless it says ALLOW."""
+        context = PageContext(
+            url=self.surface.current_url(),
+            frame_urls=self.surface.frame_urls() if hasattr(self.surface, "frame_urls") else [],
+            targets=locator.ordered(),  # every way we know to describe the element, so its name is checked too
+        )
+        meta = self.artifact.metadata
+        verdict = self.guard.authorize(action, context, run=f"replay {meta.name} v{meta.version}", step=number)
+        if verdict.decision is not Decision.ALLOW:
+            where = what or f"Step {number} ({action.action})"
+            raise SafetyBlocked(f"{where} was blocked by a safety rule.",
+                                expected="the action to be allowed", observed=verdict.reason or "blocked")
 
     def _act(self, step: Step, target: Target) -> None:
         # A click that times out did not happen: Playwright times out while waiting for the
@@ -245,7 +266,7 @@ class Replayer:
         else:  # wait
             self.surface.wait_for(target, timeout_ms=int(self.timeout_s * 1000))
 
-    def _locate(self, number: int | None, locator: Locator, what: str, *, guard: bool = True) -> tuple[Target, str]:
+    def _locate(self, number: int | None, locator: Locator, what: str, *, watch: bool = True) -> tuple[Target, str]:
         """Find the element: primary first, then each fallback, looking again until the timeout."""
         targets = locator.ordered()
         deadline = self.clock() + self.timeout_s
@@ -259,7 +280,7 @@ class Replayer:
                         expected=f"an element matching {targets[0]} (or one of {len(targets) - 1} fallback(s))",
                         observed=str(error),
                     ) from error
-                if guard and self._guard(number):  # a popup may be hiding things; it has been dismissed
+                if watch and self._watch(number):  # a popup may be hiding things; it has been dismissed
                     continue
                 self.sleep(POLL_SECONDS)
                 continue
@@ -271,7 +292,7 @@ class Replayer:
 
     # ------------------------------------------------- interruptions, outcomes
 
-    def _guard(self, number: int | None) -> bool:
+    def _watch(self, number: int | None) -> bool:
         """Dismiss any known interruption, then stop if a known outcome is showing.
 
         Returns True if an interruption was dismissed. Raises BusinessOutcome if the
@@ -288,7 +309,11 @@ class Replayer:
                     f"The interruption '{hit.text}' keeps coming back.",
                     expected="the interruption to stay dismissed", observed=f"dismissed {self.max_interruptions} times already",
                 )
-            target, matched = self._locate(number, hit.locator, f"dismissing '{hit.text}'", guard=False)
+            target, matched = self._locate(number, hit.locator, f"dismissing '{hit.text}'", watch=False)
+            # Dismissing a popup is a click like any other, so the guard rules on it too.
+            during = f" during step {number}" if number else " after the last step"
+            self._authorize(number, SimpleNamespace(action="click", text=None), hit.locator,
+                            what=f"Dismissing '{hit.text}'{during}")
             self.surface.click(target)
             self.surface.pause(POLL_SECONDS)
             self._log(number, "interruption", f"'{hit.text}' was showing; clicked {target} ({matched}).")
@@ -313,7 +338,7 @@ class Replayer:
                 expected, observed = problem
                 raise UnexpectedState(f"After step {number} ({step.action}) the app is not in the expected state.",
                                       expected=expected, observed=observed)
-            if not self._guard(number):  # a popup may be what is in the way
+            if not self._watch(number):  # a popup may be what is in the way
                 self.sleep(POLL_SECONDS)
 
     def _expectation_problem(self, url_contains: str | None, text_visible: str | None) -> tuple[str, str] | None:
@@ -356,6 +381,7 @@ class Replayer:
     # ------------------------------------------------------------- reporting
 
     def _log(self, step: int | None, kind: str, message: str) -> None:
+        message = self.redactor.text(message)  # every log line is scrubbed before it is kept or printed
         self.log.append(LogEntry(step, kind, message))
         logger.info("step %s %s: %s", step, kind, message)
 
@@ -365,14 +391,18 @@ class Replayer:
             phase=self._phase,
             action=self._action,
             error=type(problem).__name__,
-            message=str(problem),
-            expected=problem.expected,
-            observed=problem.observed,
+            message=self.redactor.text(str(problem)),
+            expected=self.redactor.text(problem.expected) if problem.expected else None,
+            observed=self.redactor.text(problem.observed) if problem.observed else None,
             screenshot=self._take_screenshot(),
         )
 
     def _take_screenshot(self) -> Path | None:
-        """Save what the screen looked like at the moment of failure. Never fails the report."""
+        """Save what the screen looked like at the moment of failure. Never fails the report.
+
+        The surface hands back a screenshot that is already blurred (observe() does it), so a
+        saved failure picture never shows a typed secret or an account number.
+        """
         try:
             png = self.surface.observe().screenshot
             self.screenshot_dir.mkdir(parents=True, exist_ok=True)

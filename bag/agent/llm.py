@@ -1,12 +1,12 @@
 """Asking the LLM for the next action.
 
-Works with any provider chosen in .env (see lba.llm). Each call is stateless:
+Works with any provider chosen in .env (see bag.llm). Each call is stateless:
 one user message holding the goal, the inputs, the steps so far and the current
 page. The model answers by calling the single `act` tool.
 """
 
-from lba.llm import LLMClient, Message, ToolSpec
-from lba.surface import Observation
+from bag.llm import LLMClient, Message, ToolSpec
+from bag.surface import Observation
 
 from .actions import tool_schema
 

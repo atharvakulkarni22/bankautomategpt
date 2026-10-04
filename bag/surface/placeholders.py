@@ -2,7 +2,7 @@
 
 The AI only ever writes placeholders:
 
-    {{member_id}}        an input the person gave us (lba discover --input member_id=...)
+    {{member_id}}        an input the person gave us (bag discover --input member_id=...)
     {{secret:BANK_USER}} a credential read from .env / the environment
 
 The surface swaps in the real value at the very last moment, just before typing.
@@ -10,7 +10,7 @@ Going the other way, anything read back from the page has secrets scrubbed out.
 
 Only secrets on an allow-list can be requested, so a malicious page that tricks
 the AI into asking for {{secret:ANTHROPIC_API_KEY}} gets an error instead of the key.
-The list is LBA_SECRET_NAMES (comma separated), default: BANK_USER, BANK_PASSWORD.
+The list is BAG_SECRET_NAMES (comma separated), default: BANK_USER, BANK_PASSWORD.
 """
 
 import os
@@ -29,7 +29,7 @@ class UnknownPlaceholder(SurfaceError):
 
 
 def secret_names_from_env(env: Mapping[str, str] = os.environ) -> tuple[str, ...]:
-    configured = [n.strip() for n in (env.get("LBA_SECRET_NAMES") or "").split(",") if n.strip()]
+    configured = [n.strip() for n in (env.get("BAG_SECRET_NAMES") or "").split(",") if n.strip()]
     return tuple(configured) or DEFAULT_SECRET_NAMES
 
 

@@ -1,6 +1,6 @@
 """Runs an artifact deterministically, without an LLM.
 
-This package must never import lba.llm or lba.agent (a test enforces it).
+This package must never import bag.llm or bag.agent (a test enforces it).
 """
 
 from .engine import (
