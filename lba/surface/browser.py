@@ -5,10 +5,18 @@ import time
 from contextlib import contextmanager
 
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from .base import Observation, SurfaceError, TargetNotFound
-from .locators import describe_element, format_unnamed_controls, resolve, unnamed_controls
+from .base import Observation, SurfaceError, SurfaceTimeout, TargetNotFound
+from .locators import (
+    describe_element,
+    element_visible,
+    format_unnamed_controls,
+    locate_first,
+    resolve,
+    unnamed_controls,
+)
 from .placeholders import Values
 from .target import Target
 
@@ -71,6 +79,8 @@ class BrowserSurface:
         """Turn Playwright's long errors into a short SurfaceError."""
         try:
             yield
+        except PlaywrightTimeoutError as error:  # must come first: it is a kind of PlaywrightError
+            raise SurfaceTimeout(f"{doing} failed: {str(error)[:500]}") from error
         except PlaywrightError as error:
             raise SurfaceError(f"{doing} failed: {str(error)[:500]}") from error
 
@@ -145,3 +155,20 @@ class BrowserSurface:
         locator = self._find(target)
         with self._errors(f"describe {target}"):
             return describe_element(locator)
+
+    # ---------------------------------------------------------- for replay
+
+    def locate(self, targets: list[Target]) -> int:
+        """Which of the Targets (checked in order) finds exactly one element right now."""
+        with self._errors("locate"):
+            return locate_first(self.page, targets)
+
+    def is_visible(self, target: Target) -> bool:
+        with self._errors(f"check visibility of {target}"):
+            return element_visible(self.page, target)
+
+    def current_url(self) -> str:
+        return self.page.url
+
+    def pause(self, seconds: float) -> None:
+        self.page.wait_for_timeout(seconds * 1000)

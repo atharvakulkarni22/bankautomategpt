@@ -6,6 +6,7 @@ from lba.surface import (
     AmbiguousTarget,
     BrowserSurface,
     SurfaceError,
+    SurfaceTimeout,
     Target,
     TargetNotFound,
     UnknownPlaceholder,
@@ -160,7 +161,7 @@ def test_popup_blocks_clicks_until_ok(surface, bank_url):
     surface.type(Target(css="input[name=pw]"), BANK_PASSWORD)
     surface.click(Target(role="button", name="Sign On"))
     surface.goto(f"{bank_url}/home?popup=1")
-    with pytest.raises(SurfaceError, match="intercepts pointer events"):
+    with pytest.raises(SurfaceTimeout, match="intercepts pointer events"):  # a timeout: worth retrying
         surface.click(SEARCH_BUTTON)
     surface.click(Target(role="button", name="OK"))
     surface.click(SEARCH_BUTTON)  # works now
@@ -189,3 +190,34 @@ def test_describe_finds_label_even_with_a_control_inside_it(home, bank_url):
     home.goto(f"{bank_url}/member/1001/subaccount")  # type <select> sits inside its <label>
     candidates = home.describe(Target(css="select[name=sa_type]"))
     assert any(c.label and c.label.startswith("Sub-account type") for c in candidates)
+
+
+# ------------------------------------------------------- what replay relies on
+
+
+def test_locate_tries_targets_in_order_and_skips_ambiguous_or_missing_ones(home):
+    missing, ambiguous = Target(role="button", name="Nope"), Target(css="input")  # 0 and 2 matches
+    assert home.locate([SEARCH_BUTTON, missing]) == 0  # the first one that works wins
+    assert home.locate([missing, SEARCH_BUTTON]) == 1
+    assert home.locate([missing, ambiguous, MEMBER_ID_BOX]) == 2
+    with pytest.raises(TargetNotFound, match=r"None of the 2 target\(s\) matched.*matches 2 elements"):
+        home.locate([missing, ambiguous])
+
+
+def test_is_visible_ignores_hidden_leftovers(surface, bank_url):
+    surface.goto(f"{bank_url}/login")
+    surface.type(Target(css="input[name=user]"), BANK_USER)
+    surface.type(Target(css="input[name=pw]"), BANK_PASSWORD)
+    surface.click(Target(role="button", name="Sign On"))
+    surface.goto(f"{bank_url}/home?popup=1")
+    popup = Target(text="System maintenance notice")
+    assert surface.is_visible(popup)
+    surface.click(Target(role="button", name="OK"))
+    assert not surface.is_visible(popup)  # still in the page, but hidden: it must not count
+    assert surface.is_visible(Target(text="Member Services"))
+    assert not surface.is_visible(Target(text="nothing like this"))
+
+
+def test_current_url_and_pause(home):
+    assert home.current_url().endswith("/home")
+    home.pause(0.01)

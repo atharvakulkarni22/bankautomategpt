@@ -24,6 +24,11 @@ class AmbiguousTarget(SurfaceError):
     """More than one element matches, so we refuse to guess (a wrong click could move money)."""
 
 
+class SurfaceTimeout(SurfaceError):
+    """The app was too slow, or the element was not ready in time (not visible, not enabled,
+    covered by something). Waiting and trying again often works, so replay retries these."""
+
+
 class Observation(BaseModel):
     """What the surface sees right now."""
 
@@ -50,4 +55,20 @@ class Surface(Protocol):
 
     def describe(self, target: Target) -> list[Target]:
         """Other Targets that find the same element, best first. The recorder stores these as fallbacks."""
+        ...
+
+    # The next four are what replay needs. They look at the page right now and never wait.
+
+    def locate(self, targets: list[Target]) -> int:
+        """Index of the first Target that finds exactly one element. Raises TargetNotFound if none does."""
+        ...
+
+    def is_visible(self, target: Target) -> bool:
+        """True if at least one element matching the Target is visible."""
+        ...
+
+    def current_url(self) -> str: ...
+
+    def pause(self, seconds: float) -> None:
+        """Wait, while still letting the app run (a plain time.sleep can stall a browser)."""
         ...

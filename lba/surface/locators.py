@@ -51,6 +51,35 @@ def resolve(page, target: Target):
     return found[0][1]
 
 
+def locate_first(page, targets: list[Target]) -> int:
+    """Index of the first Target that finds exactly one element (checked in order, right now).
+
+    This is how fallbacks work: the primary is tried first, and each later Target is
+    only looked at if everything before it found nothing or was ambiguous.
+    """
+    reasons = []
+    for index, target in enumerate(targets):
+        try:
+            resolve(page, target)
+            return index
+        except (TargetNotFound, AmbiguousTarget) as error:
+            reasons.append(str(error))
+    raise TargetNotFound(f"None of the {len(targets)} target(s) matched: " + " | ".join(reasons))
+
+
+def element_visible(page, target: Target) -> bool:
+    """True if any element matching the Target is visible (hidden leftovers in the page do not count)."""
+    for frame in page.frames:
+        try:
+            locator = locator_in_frame(frame, target)
+            for i in range(min(locator.count(), 20)):
+                if locator.nth(i).is_visible():
+                    return True
+        except PlaywrightError:
+            continue  # frame is navigating or was removed
+    return False
+
+
 # ------------------------------------------------------------------ JavaScript
 
 # Builds a CSS selector for an element: #id, else tag[name="..."], else a chain

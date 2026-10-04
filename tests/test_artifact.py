@@ -489,3 +489,21 @@ def test_list_shows_broken_files_without_crashing(cli):
     cli.folder.mkdir()
     (cli.folder / "broken.v1.yaml").write_text("a: [")
     assert "INVALID" in cli("list").output
+
+
+def test_a_locator_made_from_the_value_read_is_ranked_last():
+    recording = good_recording()
+    bound = [{"role": "cell", "name": "Priya Sharma"}, {"text": "Priya Sharma", "exact": True}, {"css": "tr > td"}]
+    recording["steps"][7] = recorded(8, action("read", {"role": "cell", "name": "Priya Sharma"}, output_name="member_name"),
+                                     candidates=bound)
+    result = build(recording)
+    locator = result.artifact.steps[7].locator
+    assert locator.primary == Target(css="tr > td")  # works for any member
+    assert locator.fallbacks == [Target(role="cell", name="Priya Sharma"), Target(text="Priya Sharma", exact=True)]
+    assert result.warnings == []  # something usable was left, so nothing to warn about
+
+
+def test_warns_when_every_locator_is_made_from_the_value_read():
+    recording = good_recording()
+    recording["steps"][7] = recorded(8, action("read", {"role": "cell", "name": "Priya Sharma"}, output_name="member_name"))
+    assert any("located by its own value" in w for w in build(recording).warnings)

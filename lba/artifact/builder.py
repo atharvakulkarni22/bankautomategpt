@@ -64,8 +64,23 @@ def _rank(target: Target) -> int:
     return 4
 
 
-def _locator(action_target: Target, candidates: list[dict], why: str) -> Locator:
-    """Merge the target the agent used with the recorded fallbacks, best first."""
+def _bound_to(target: Target, value: str) -> bool:
+    """True if the Target is built from the value that was read (so it cannot work for other inputs)."""
+    value = value.strip().lower()
+    if len(value) < 2:
+        return False
+    for field in (target.name, target.label, target.text):
+        if field and (field.lower() == value or value in field.lower()):
+            return True
+    return False
+
+
+def _locator(action_target: Target, candidates: list[dict], why: str, read_value: str = "") -> Locator:
+    """Merge the target the agent used with the recorded fallbacks, best first.
+
+    For a "read" step, `read_value` is what was read. A Target made from that value
+    (a cell named "Priya Sharma") works only for that one member, so it goes last.
+    """
     targets = []
     for raw in candidates:
         try:
@@ -73,7 +88,8 @@ def _locator(action_target: Target, candidates: list[dict], why: str) -> Locator
         except ValidationError:
             continue  # a hand-edited recording with a broken candidate: skip just that one
     targets.append(action_target)
-    ordered = sorted(dict.fromkeys(targets), key=_rank)  # dict.fromkeys drops repeats, keeps order; sort is stable
+    # dict.fromkeys drops repeats and keeps order; the sort is stable, so ties keep the recorded order.
+    ordered = sorted(dict.fromkeys(targets), key=lambda target: (_bound_to(target, read_value), _rank(target)))
     return Locator(primary=ordered[0], fallbacks=ordered[1:], why=why)
 
 
@@ -164,7 +180,8 @@ def build_artifact(
             continue  # "done" and "ask_human" just end the run
 
         why = values.protect(recorded.get("reason") or action.get("reason") or "")
-        locator = _locator(Target.model_validate(action["target"]), recorded.get("target_candidates") or [], why)
+        read_value = str(recorded_outputs.get(action.get("output_name"), "")) if action["action"] == "read" else ""
+        locator = _locator(Target.model_validate(action["target"]), recorded.get("target_candidates") or [], why, read_value)
         text = values.protect(action["text"]) if action["action"] == "type" else None
 
         # Typing the same text into the same field twice is pointless: keep one.
@@ -185,12 +202,10 @@ def build_artifact(
 
         if step.action == "read":
             output_info.setdefault(step.output_name, {"why": why, "type": _infer_type(str(recorded_outputs.get(step.output_name, "")))})
-            value = str(recorded_outputs.get(step.output_name, ""))
-            primary = step.locator.primary
-            if primary.text and value and (primary.text.lower() in value.lower() or value.lower() in primary.text.lower()):
+            if _bound_to(step.locator.primary, read_value):  # even the best locator is made from the value
                 warnings.append(
-                    f"Output '{step.output_name}' is located by its own value as text. "
-                    "Replaying with different inputs will not find it; give it a label or role instead."
+                    f"Output '{step.output_name}' is located by its own value. "
+                    "Replaying with different inputs will not find it; give it a label, role or css instead."
                 )
 
     if not steps:

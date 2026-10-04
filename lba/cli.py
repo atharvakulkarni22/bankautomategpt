@@ -90,9 +90,62 @@ def discover(
 
 
 @app.command()
-def replay(artifact: str = typer.Argument(..., help="Name of the saved artifact.")) -> None:
-    """Replay a saved artifact without an LLM."""
-    _todo("replay")
+def replay(
+    artifact: str = typer.Argument(..., help="Artifact name (latest version), name.vN, or a file path."),
+    inputs: list[str] = typer.Option([], "--input", help="An input as name=value. Repeat for several."),
+    headed: bool = typer.Option(False, "--headed", help="Show the browser window."),
+    start_url: str = typer.Option(None, "--start-url", help="Where to begin (default: the artifact's, on BANK_URL's host)."),
+    timeout: float = typer.Option(10.0, help="Seconds to wait for each element or expected state."),
+    artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved."),
+    screenshot_dir: Path = typer.Option("evidence/screenshots", help="Where a failure screenshot is saved."),
+) -> None:
+    """Replay an approved artifact with new inputs. No LLM is used.
+
+    Exit code: 0 success, 1 failure or refused, 2 business outcome (e.g. NOT_FOUND).
+    """
+    # Nothing here touches lba.llm or lba.agent: replay must run with no LLM.
+    from dotenv import load_dotenv
+
+    from lba.artifact import ArtifactError, load_artifact, resolve_artifact_path
+    from lba.replay import BUSINESS_OUTCOME, SUCCESS, Replayer, ReplayRefused, prepare_run, resolve_start_url
+    from lba.surface import BrowserSurface, Values
+
+    load_dotenv()
+    try:
+        loaded = load_artifact(resolve_artifact_path(artifact, artifacts_dir))
+        clean = prepare_run(loaded, _parse_inputs(inputs), Values().secret_names)
+    except (ArtifactError, ReplayRefused) as error:
+        _fail(str(error))
+
+    values = Values(inputs=clean)  # secrets come from .env; the checked inputs from the command line
+    url = start_url or resolve_start_url(loaded.metadata.start_url, os.environ.get("BANK_URL"))
+    meta = loaded.metadata
+    typer.echo(f"Replaying {meta.name} v{meta.version} from {url}")
+    with BrowserSurface(headless=not headed, timeout_ms=int(timeout * 1000), values=values) as surface:
+        result = Replayer(loaded, surface, start_url=url, timeout_s=timeout, screenshot_dir=screenshot_dir).run()
+
+    for entry in result.log:
+        where = f"step {entry.step}" if entry.step else "run"
+        typer.echo(f"  {where}: {entry.message}" if entry.kind != "fallback" else f"  {where}: FALLBACK {entry.message}")
+
+    if result.status == SUCCESS:
+        typer.echo(f"SUCCESS in {result.seconds:.1f}s")
+        for name, value in result.outputs.items():
+            typer.echo(f"  {name} = {value}")
+        return
+    if result.status == BUSINESS_OUTCOME:
+        typer.echo(f"BUSINESS OUTCOME: {result.outcome_code} ({result.message})")
+        raise typer.Exit(2)
+    failure = result.failure
+    where = f"step {failure.step} ({failure.action})" if failure.step else f"the {failure.phase} of the run"
+    typer.echo(f"FAILURE at {where}: {failure.error}\n  {failure.message}", err=True)
+    if failure.expected:
+        typer.echo(f"  expected: {failure.expected}", err=True)
+    if failure.observed:
+        typer.echo(f"  observed: {failure.observed}", err=True)
+    if failure.screenshot:
+        typer.echo(f"  screenshot: {failure.screenshot}", err=True)
+    raise typer.Exit(1)
 
 
 def _fail(message: str):

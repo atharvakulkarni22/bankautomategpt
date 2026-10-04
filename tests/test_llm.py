@@ -223,5 +223,19 @@ def test_gemini_resends_its_own_reply_unchanged():
 
 def test_replay_never_imports_the_llm_layer():
     # lba.artifact is included: replay depends on it, so it must stay free of the LLM too.
-    code = "import sys, lba.replay, lba.artifact; sys.exit(any(m.startswith(('lba.llm', 'anthropic', 'openai', 'google.genai')) for m in sys.modules))"
+    code = "import sys, lba.replay, lba.artifact; sys.exit(any(m.startswith(('lba.llm', 'lba.agent', 'anthropic', 'openai', 'google.genai')) for m in sys.modules))"
+    assert subprocess.run([sys.executable, "-c", code]).returncode == 0
+
+
+def test_the_replay_command_never_loads_the_llm_either():
+    """Run the real CLI entry point for `lba replay` and check what ended up imported."""
+    code = """
+import sys
+from typer.testing import CliRunner
+from lba.cli import app
+
+CliRunner().invoke(app, ['replay', 'no-such-artifact'])  # refuses early, after all its imports ran
+loaded = [m for m in sys.modules if m.startswith(('lba.llm', 'lba.agent', 'anthropic', 'openai', 'google.genai'))]
+sys.exit(1 if loaded else 0)
+"""
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0
