@@ -1,24 +1,24 @@
-"""Command line entry point for the `lba` command."""
+"""Command line entry point for the `bag` command."""
 
 import os
 from pathlib import Path
 
 import typer
 
-app = typer.Typer(help="Legacy Bank Agent: learn a task once, replay it without an LLM.")
+app = typer.Typer(help="Bank Automate GPT: learn a task once, replay it without an LLM.")
 
 
 def _todo(name: str) -> None:
-    typer.echo(f"`lba {name}` is not implemented yet.")
+    typer.echo(f"`bag {name}` is not implemented yet.")
 
 
 @app.command()
 def bank(port: int = typer.Option(5000, help="Port to listen on (host is always 127.0.0.1).")) -> None:
     """Start the fake legacy bank web app."""
-    # Imported here so `lba --help` stays fast and works without Flask settings.
+    # Imported here so `bag --help` stays fast and works without Flask settings.
     from dotenv import load_dotenv
 
-    from lba.bankapp.app import create_app
+    from bag.bankapp.app import create_app
 
     load_dotenv()  # reads BANK_USER, BANK_PASSWORD and fault switches from .env
     try:
@@ -42,6 +42,22 @@ def _parse_inputs(pairs: list[str]) -> dict[str, str]:
     return inputs
 
 
+def _safety(config_path: Path, values):
+    """Load the safety rules and build the guard and redactor every run uses.
+
+    A missing or invalid config stops everything: with no rules the safe answer is "no".
+    """
+    from bag.safety import AuditLog, Guard, Redactor, SafetyConfigError, load_safety_config, terminal_approver
+
+    try:
+        config = load_safety_config(config_path)
+    except SafetyConfigError as error:
+        _fail(str(error))
+    redactor = Redactor(values)
+    guard = Guard(config, approver=terminal_approver, audit=AuditLog(config.audit_log, redactor), redactor=redactor)
+    return config, guard, redactor
+
+
 @app.command()
 def discover(
     goal: str = typer.Option(..., "--goal", help="What the agent should achieve, in plain English."),
@@ -52,38 +68,44 @@ def discover(
     max_seconds: int = typer.Option(180, help="Stop after this many seconds."),
     no_screenshot: bool = typer.Option(False, "--no-screenshot", help="Do not send screenshots (for text-only models)."),
     output_dir: Path = typer.Option("evidence/recordings", help="Where the recording is saved."),
+    safety_config: Path = typer.Option("config/safety.yaml", help="The safety rules."),
 ) -> None:
     """Let the agent explore the bank app to reach a goal, and record what it did."""
-    # Imported here so `lba --help` stays fast.
+    # Imported here so `bag --help` stays fast.
     from dotenv import load_dotenv
 
-    from lba.agent import AgentLLM, Recorder, run_discovery
-    from lba.llm import LLMConfigError, get_client
-    from lba.surface import BrowserSurface, Values
+    from bag.agent import AgentLLM, Recorder, run_discovery
+    from bag.llm import LLMConfigError, get_client
+    from bag.surface import BrowserSurface, Values
 
     load_dotenv()
     values = Values(inputs=_parse_inputs(inputs))  # secrets come from .env, never from the command line
     start_url = start_url or os.environ.get("BANK_URL", "http://127.0.0.1:5000")
+    config, guard, redactor = _safety(safety_config, values)
     try:
         client = get_client()
     except LLMConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1)
 
-    recorder = Recorder(goal, values.input_names, start_url, getattr(client, "model", "unknown"), output_dir)
-    typer.echo(f"Goal: {goal}\nModel: {recorder.data['model']}\nRecording: {recorder.path}\n")
-    with BrowserSurface(headless=not headed, values=values) as surface:
+    recorder = Recorder(goal, values.input_names, start_url, getattr(client, "model", "unknown"), output_dir, redactor)
+    typer.echo(redactor.text(f"Goal: {goal}\nModel: {recorder.data['model']}\nRecording: {recorder.path}\n"))
+    surface = BrowserSurface(
+        headless=not headed, values=values,
+        blur_screenshots=config.blur_screenshots, blur_selectors=config.blur_selectors,
+    )
+    with surface:
         result = run_discovery(
             goal, surface, AgentLLM(client, use_screenshot=not no_screenshot), recorder, values, start_url,
-            max_steps=max_steps, max_seconds=max_seconds,
+            guard=guard, redactor=redactor, max_steps=max_steps, max_seconds=max_seconds,
         )
 
     typer.echo(f"Stopped: {result.stop_reason} after {result.steps} step(s).")
     for name, value in result.outputs.items():
-        typer.echo(f"  {name} = {value}")
+        typer.echo(f"  {name} = {redactor.text(value)}")
     if result.message:
         label = "Question for you" if result.stop_reason == "ask_human" else "Note"
-        typer.echo(f"{label}: {result.message}")
+        typer.echo(f"{label}: {redactor.text(result.message)}")
     typer.echo(f"Recording saved to {result.recording_path}")
     if result.stop_reason != "done":
         raise typer.Exit(1)
@@ -98,17 +120,18 @@ def replay(
     timeout: float = typer.Option(10.0, help="Seconds to wait for each element or expected state."),
     artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved."),
     screenshot_dir: Path = typer.Option("evidence/screenshots", help="Where a failure screenshot is saved."),
+    safety_config: Path = typer.Option("config/safety.yaml", help="The safety rules."),
 ) -> None:
     """Replay an approved artifact with new inputs. No LLM is used.
 
     Exit code: 0 success, 1 failure or refused, 2 business outcome (e.g. NOT_FOUND).
     """
-    # Nothing here touches lba.llm or lba.agent: replay must run with no LLM.
+    # Nothing here touches bag.llm or bag.agent: replay must run with no LLM.
     from dotenv import load_dotenv
 
-    from lba.artifact import ArtifactError, load_artifact, resolve_artifact_path
-    from lba.replay import BUSINESS_OUTCOME, SUCCESS, Replayer, ReplayRefused, prepare_run, resolve_start_url
-    from lba.surface import BrowserSurface, Values
+    from bag.artifact import ArtifactError, load_artifact, resolve_artifact_path
+    from bag.replay import BUSINESS_OUTCOME, SUCCESS, Replayer, ReplayRefused, prepare_run, resolve_start_url
+    from bag.surface import BrowserSurface, Values
 
     load_dotenv()
     try:
@@ -118,11 +141,19 @@ def replay(
         _fail(str(error))
 
     values = Values(inputs=clean)  # secrets come from .env; the checked inputs from the command line
+    config, guard, redactor = _safety(safety_config, values)
     url = start_url or resolve_start_url(loaded.metadata.start_url, os.environ.get("BANK_URL"))
     meta = loaded.metadata
     typer.echo(f"Replaying {meta.name} v{meta.version} from {url}")
-    with BrowserSurface(headless=not headed, timeout_ms=int(timeout * 1000), values=values) as surface:
-        result = Replayer(loaded, surface, start_url=url, timeout_s=timeout, screenshot_dir=screenshot_dir).run()
+    surface = BrowserSurface(
+        headless=not headed, timeout_ms=int(timeout * 1000), values=values,
+        blur_screenshots=config.blur_screenshots, blur_selectors=config.blur_selectors,
+    )
+    with surface:
+        result = Replayer(
+            loaded, surface, guard=guard, redactor=redactor, start_url=url, timeout_s=timeout,
+            screenshot_dir=screenshot_dir,
+        ).run()
 
     for entry in result.log:
         where = f"step {entry.step}" if entry.step else "run"
@@ -155,7 +186,7 @@ def _fail(message: str):
 
 @app.command()
 def build(
-    recording: Path = typer.Argument(..., exists=True, dir_okay=False, help="A recording from `lba discover`."),
+    recording: Path = typer.Argument(..., exists=True, dir_okay=False, help="A recording from `bag discover`."),
     name: str = typer.Option(None, "--name", help="Artifact name (default: made from the goal)."),
     version: int = typer.Option(None, "--version", help="Version number (default: the next free one)."),
     app_name: str = typer.Option("First Legacy Bank", "--app", help="Name of the application."),
@@ -165,8 +196,8 @@ def build(
     """Turn a discovery recording into a draft artifact (a reusable task)."""
     from dotenv import load_dotenv
 
-    from lba.artifact import ArtifactError, BuildError, build_artifact, default_name, load_recording, next_version, save_artifact
-    from lba.surface import Values
+    from bag.artifact import ArtifactError, BuildError, build_artifact, default_name, load_recording, next_version, save_artifact
+    from bag.surface import Values
 
     load_dotenv()  # so secrets from .env are recognised and kept out of the file
     try:
@@ -186,7 +217,7 @@ def build(
                f"{len(artifact.inputs)} input(s), {len(artifact.outputs)} output(s).")
     for warning in result.warnings:
         typer.echo(f"  Warning: {warning}")
-    typer.echo(f"Saved to {path}\nNext: read and edit it, then run `lba approve {artifact.metadata.name}`.")
+    typer.echo(f"Saved to {path}\nNext: read and edit it, then run `bag approve {artifact.metadata.name}`.")
 
 
 def _locator_line(locator) -> str:
@@ -201,7 +232,7 @@ def approve(
     artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved."),
 ) -> None:
     """Review a draft artifact and mark it approved, so it may be replayed."""
-    from lba.artifact import ArtifactError, approve_artifact, load_artifact, resolve_artifact_path
+    from bag.artifact import ArtifactError, approve_artifact, load_artifact, resolve_artifact_path
 
     try:
         path = resolve_artifact_path(artifact, artifacts_dir)
@@ -246,11 +277,11 @@ def resume(run_id: str = typer.Argument(..., help="Run to resume after human tak
 @app.command("list")
 def list_artifacts(artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved.")) -> None:
     """List saved artifacts."""
-    from lba.artifact import list_artifacts as find_artifacts
+    from bag.artifact import list_artifacts as find_artifacts
 
     entries = find_artifacts(artifacts_dir)
     if not entries:
-        typer.echo(f"No artifacts in {artifacts_dir}. Build one with: lba build <recording>")
+        typer.echo(f"No artifacts in {artifacts_dir}. Build one with: bag build <recording>")
         return
     typer.echo(f"{'NAME':<28}{'VER':<5}{'STATUS':<10}{'STEPS':<7}{'INPUTS':<20}DESCRIPTION")
     for entry in entries:

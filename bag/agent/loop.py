@@ -1,6 +1,10 @@
-"""The discovery loop: observe -> ask the LLM -> check -> act -> record, repeat.
+"""The discovery loop: observe -> ask the LLM -> guard -> act -> record, repeat.
 
 Stops when the AI says done, asks for a human, or a limit is hit (steps, time).
+
+Two safety layers run here: the guard decides whether each action may happen (and asks
+a human when it must), and the redactor scrubs everything that is written down or shown
+to the AI (step results, recordings, messages).
 """
 
 import time
@@ -9,8 +13,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from lba import safety
-from lba.surface import SurfaceError
+from bag.safety import Decision, PageContext, Redactor
+from bag.surface import SurfaceError
 
 from .actions import Action
 from .llm import NoActionError
@@ -62,6 +66,13 @@ def _describe(surface, action: Action):
         return []
 
 
+def _page_context(surface, url: str, action: Action, candidates) -> PageContext:
+    """What the guard needs to know: the page, its iframes, and every way to describe the element."""
+    targets = list(dict.fromkeys([*candidates, *([action.target] if action.target else [])]))
+    frames = surface.frame_urls() if hasattr(surface, "frame_urls") else []
+    return PageContext(url=url, frame_urls=frames, targets=targets)
+
+
 def run_discovery(
     goal,
     surface,
@@ -70,23 +81,42 @@ def run_discovery(
     values,
     start_url,
     *,
+    guard,
+    redactor=None,
     max_steps=25,
     max_seconds=180,
-    safety_check=safety.check,
     clock=time.monotonic,
 ) -> DiscoveryResult:
-    """Let the AI explore until it finishes the goal or a limit is reached."""
+    """Let the AI explore until it finishes the goal or a limit is reached.
+
+    `guard` must offer .check_url(url) and .authorize(action, context, run=, step=), as
+    bag.safety.Guard does. There is deliberately no default: running without a guard
+    must be a loud mistake, not a quiet one.
+    """
+    redactor = redactor or Redactor(values)
+    # One redactor for the whole run. The recorder may have been built with a different one
+    # (one that does not know this run's secrets), so it is made to use this one: nothing can
+    # slip into the recording through a mismatch.
+    recorder.redactor = redactor
     started = clock()
     outputs: dict = {}
     history: list = []  # (index, action summary, result) shown to the AI each turn
     steps = 0
     stop, message = STOP_MAX_STEPS, ""  # what happens if the loop simply runs out of steps
 
+    def finish(stop_reason, steps_taken, text=""):
+        text = redactor.text(text)
+        recorder.finish(stop_reason, outputs, text)
+        return DiscoveryResult(stop_reason, steps_taken, redactor.data(outputs), recorder.path, text)
+
+    # The browser may only start on an allowed site.
+    verdict = guard.check_url(start_url)
+    if verdict.decision is not Decision.ALLOW:
+        return finish(STOP_ERROR, 0, f"Start URL blocked by safety: {verdict.reason}")
     try:
         surface.goto(start_url)
     except SurfaceError as error:
-        recorder.finish(STOP_ERROR, outputs, f"Could not open {start_url}: {error}")
-        return DiscoveryResult(STOP_ERROR, 0, outputs, recorder.path, f"Could not open {start_url}: {error}")
+        return finish(STOP_ERROR, 0, f"Could not open {start_url}: {error}")
 
     for index in range(1, max_steps + 1):
         if clock() - started >= max_seconds:
@@ -107,8 +137,9 @@ def run_discovery(
                 goal, values.input_names, values.secret_names, history, observation, index, max_steps
             )
         except NoActionError as error:
-            recorder.add_step(index, observation.url, "", "invalid", str(error))
-            history.append((index, "(no action)", f"INVALID: {error}"))
+            problem = redactor.text(error)
+            recorder.add_step(index, observation.url, "", "invalid", problem)
+            history.append((index, "(no action)", f"INVALID: {problem}"))
             continue
         except Exception as error:  # provider or network failure: stop, keep the recording
             stop, message = STOP_ERROR, f"LLM call failed: {type(error).__name__}: {error}"
@@ -124,10 +155,13 @@ def run_discovery(
             continue
         action = action.protected(values)  # a literal real value becomes its placeholder
 
-        # 4. CHECK it is safe.
-        verdict = safety_check(action)
-        if not verdict.allowed:
-            result = f"BLOCKED by safety: {verdict.reason}"
+        # 4. GUARD: may this happen? The fallbacks are looked up first (before a click changes the
+        #    page) because they also tell the guard what the element is called.
+        candidates = [] if action.action in ("wait", "done", "ask_human") else _describe(surface, action)
+        context = _page_context(surface, observation.url, action, candidates)
+        verdict = guard.authorize(action, context, run="discovery", step=index)
+        if verdict.decision is not Decision.ALLOW:
+            result = redactor.text(f"BLOCKED by safety: {verdict.reason}")
             recorder.add_step(index, observation.url, action.reason, "blocked", result, action=action)
             history.append((index, action.summary(), result))
             continue
@@ -140,17 +174,16 @@ def run_discovery(
             break
 
         # 6. ACT on the page, then RECORD what happened.
-        candidates = [] if action.action == "wait" else _describe(surface, action)  # before a click changes the page
         try:
             result, status = _execute(surface, action, outputs), "ok"
             if action.action == "wait":
                 candidates = _describe(surface, action)
         except SurfaceError as error:
             result, status = f"ERROR: {_short(error, 500)}", "error"
+        result = redactor.text(result)  # a value that was read may hold an account number
         recorder.add_step(
             index, observation.url, action.reason, status, result, action=action, candidates=candidates
         )
         history.append((index, action.summary(), result))
 
-    recorder.finish(stop, outputs, message)
-    return DiscoveryResult(stop, steps, outputs, recorder.path, message)
+    return finish(stop, steps, message)

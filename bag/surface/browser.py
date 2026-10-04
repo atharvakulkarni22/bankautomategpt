@@ -8,6 +8,8 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from bag.safety.redact import blur_boxes, has_account_number, mask_account_numbers
+
 from .base import Observation, SurfaceError, SurfaceTimeout, TargetNotFound
 from .locators import (
     describe_element,
@@ -25,6 +27,39 @@ from .target import Target
 _NOISE_TAGS = re.compile(r"\s\[(?:ref|cursor)=[^\]]*\]")
 
 
+# Finds the parts of a page that may hold sensitive data, in this frame's own coordinates:
+# elements matching the configured selectors, the current value of every field, and text
+# that contains a long run of digits. Python then decides which of those are really sensitive,
+# so no secret ever has to be handed to the page's own JavaScript.
+_BOXES_JS = r"""
+(selectors) => {
+  const box = (r) => ({ x: r.left, y: r.top, width: r.width, height: r.height });
+  const selected = [];
+  for (const selector of selectors) {
+    try { document.querySelectorAll(selector).forEach((el) => selected.push(box(el.getBoundingClientRect()))); }
+    catch (e) { /* a bad selector in the config must not stop the run */ }
+  }
+  const fields = [];
+  for (const el of document.querySelectorAll('input, textarea')) {
+    if (el.value) fields.push({ box: box(el.getBoundingClientRect()), value: el.value });
+  }
+  const texts = [];
+  if (document.body) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (/(\d[\s-]?){8,}/.test(node.nodeValue)) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const r of range.getClientRects()) texts.push({ box: box(r), text: node.nodeValue });
+      }
+    }
+  }
+  return { selected, fields, texts };
+}
+"""
+
+
 class BrowserSurface:
     def __init__(
         self,
@@ -32,11 +67,16 @@ class BrowserSurface:
         timeout_ms: int = 10_000,
         viewport: dict | None = None,
         values: Values | None = None,
+        blur_screenshots: bool = True,
+        blur_selectors: tuple[str, ...] = ("input[type=password]",),
     ):
         self.headless = headless
         self.timeout_ms = timeout_ms
         # Real inputs and secrets for {{placeholders}}. Default: secrets from the environment.
         self.values = values or Values()
+        # Every screenshot this surface returns has sensitive spots blurred (see sensitive_boxes).
+        self.blur_screenshots = blur_screenshots
+        self.blur_selectors = tuple(blur_selectors)
         self._viewport = viewport or {"width": 1280, "height": 800}
         self._playwright = self._browser = self._page = None
 
@@ -111,11 +151,15 @@ class BrowserSurface:
             unnamed = format_unnamed_controls(unnamed_controls(page))
             if unnamed:
                 tree += "\n\n" + unnamed
+            screenshot = page.screenshot(type="png")
+            if self.blur_screenshots:  # if the sensitive spots cannot be found, this raises: never send an unblurred image
+                screenshot = blur_boxes(screenshot, self.sensitive_boxes())
             return Observation(
                 url=page.url,
-                title=page.title(),
-                tree=self.values.redact(tree),  # a typed secret must never reach the AI
-                screenshot=page.screenshot(type="png"),
+                title=mask_account_numbers(self.values.redact(page.title())),
+                # A typed secret must never reach the AI, and neither must a full account number.
+                tree=mask_account_numbers(self.values.redact(tree)),
+                screenshot=screenshot,
             )
 
     def click(self, target: Target) -> None:
@@ -172,3 +216,34 @@ class BrowserSurface:
 
     def pause(self, seconds: float) -> None:
         self.page.wait_for_timeout(seconds * 1000)
+
+    # ------------------------------------------------------ for the safety layer
+
+    def frame_urls(self) -> list[str]:
+        """The addresses loaded inside iframes. The guard checks them against its allowlist."""
+        page = self.page
+        return [frame.url for frame in page.frames if frame != page.main_frame]
+
+    def sensitive_boxes(self) -> list[tuple[float, float, float, float]]:
+        """Screen rectangles (x, y, width, height) to blur: selectors from the config, fields
+        that hold a secret, and text that looks like an account number. Iframes included."""
+        boxes = []
+        page = self.page
+        for frame in page.frames:
+            if frame == page.main_frame:
+                dx = dy = 0.0
+            else:
+                frame_box = frame.frame_element().bounding_box()  # where the iframe sits on the page
+                if frame_box is None:
+                    continue  # the iframe is not displayed, so nothing in it is on screen
+                dx, dy = frame_box["x"], frame_box["y"]
+            found = frame.evaluate(_BOXES_JS, list(self.blur_selectors))
+
+            def place(box):
+                return (box["x"] + dx, box["y"] + dy, box["width"], box["height"])
+
+            boxes += [place(b) for b in found["selected"]]
+            boxes += [place(f["box"]) for f in found["fields"]
+                      if self.values.redact(f["value"]) != f["value"] or has_account_number(f["value"])]
+            boxes += [place(t["box"]) for t in found["texts"] if has_account_number(t["text"])]
+        return boxes

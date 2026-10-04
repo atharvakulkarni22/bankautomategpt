@@ -1,0 +1,65 @@
+# Safety rules for bag. Checked and loaded at the start of every discovery and replay run.
+# If this file is missing or invalid, nothing runs: with no rules, the safe answer is "no".
+#
+# The guard answers ALLOW, NEEDS_APPROVAL (a person must say yes) or BLOCK (never).
+
+# --- BLOCK: pages the browser may be on -------------------------------------------------
+# Anything else, including a page loaded inside an iframe, is BLOCKED.
+# Why it matters for a bank: a redirect, a phishing link or a look-alike domain can land the
+# browser on a page the bank does not control. An agent that obeys what it sees would then
+# happily type the bank password into the attacker's form. Allow-listing the site turns
+# "the agent was tricked" into "the agent stopped".
+# After `bag bank --port N` change the port here, or the run will be (correctly) blocked.
+allowed_urls:
+  - http://127.0.0.1:5000
+  - http://localhost:5000
+
+# --- NEEDS_APPROVAL: risky buttons ------------------------------------------------------
+# A click on an element whose name, label, text or css holds one of these WORDS (whole
+# words, any capitalisation) pauses for a human's yes.
+# Why it matters for a bank: these buttons are the ones that change something real and
+# cannot be taken back: money moves, records vanish. Reading a balance can be repeated;
+# a transfer cannot. A person confirms those, however sure the AI or the artifact is.
+risky_button_names:
+  - confirm
+  - submit
+  - transfer
+  - pay
+  - send money
+  - delete
+  - remove
+  - close account
+  - approve
+  - authorize
+  - wire
+
+# --- NEEDS_APPROVAL: risky actions ------------------------------------------------------
+# Kinds of action that always need a yes. text_matches is tested on the text typed (only
+# {{placeholders}}, never real values); target_matches on everything known about the field.
+# Why it matters for a bank: money amounts, payees and one-time codes are the inputs where
+# a typo or a prompt-injected value does real damage, so a person sees them first.
+risky_actions:
+  - name: Entering a money amount, payee or bank details
+    action: type
+    target_matches: '\b(amount|amt|deposit|payee|iban|routing|swift)\b'
+  - name: Entering a PIN or one-time code
+    action: type
+    target_matches: '\b(pin|otp|passcode|cvv)\b'
+
+# --- Screenshots ---------------------------------------------------------------------------
+# Screenshots go to the AI provider and to disk, so sensitive spots are blurred first.
+# Fields that hold a secret and text that looks like an account number are always blurred;
+# list any other css selectors here.
+# Why it matters for a bank: a screenshot is a copy of customer data that outlives the run
+# and leaves the building. Blurring at the source means no later step can leak what was
+# never kept.
+blur_selectors:
+  - input[type=password]
+blur_screenshots: true
+
+# --- The audit log -----------------------------------------------------------------------
+# Every decision (allowed, asked, approved, declined, blocked) is appended here as one JSON
+# line, with secrets removed and account numbers masked.
+# Why it matters for a bank: when someone asks "why did the robot do that?", the answer has
+# to be on record, and the record must not become a second place sensitive data lives.
+audit_log: evidence/safety-decisions.jsonl

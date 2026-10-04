@@ -24,8 +24,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
-from lba.surface.placeholders import PLACEHOLDER
-from lba.surface.target import Target
+from bag.surface.placeholders import PLACEHOLDER
+from bag.surface.target import Target
 
 ValueType = Literal["string", "int", "decimal"]
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -52,7 +52,7 @@ class Metadata(_Strict):
     # One or two sentences: what this task does.
     description: str = ""
     # draft    = built from a recording; nobody has checked it yet.
-    # approved = a human reviewed it (lba approve) and it may be replayed.
+    # approved = a human reviewed it (bag approve) and it may be replayed.
     status: Literal["draft", "approved"] = "draft"
     # The page replay begins on. Replay may override the host (BANK_URL).
     start_url: str

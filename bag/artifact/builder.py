@@ -12,8 +12,8 @@ from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
-from lba.surface.placeholders import PLACEHOLDER, Values
-from lba.surface.target import Target
+from bag.surface.placeholders import PLACEHOLDER, Values
+from bag.surface.target import Target
 
 from .schema import Artifact, Expected, Input, Interruption, Locator, Metadata, Outcome, Output, Step, SuccessCheck
 

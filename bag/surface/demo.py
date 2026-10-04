@@ -1,7 +1,7 @@
 """Log in to the fake bank and print what the surface sees.
 
-Start the bank first (in another terminal):   lba bank
-Then run this:                                python -m lba.surface.demo [--headed]
+Start the bank first (in another terminal):   bag bank
+Then run this:                                python -m bag.surface.demo [--headed]
 """
 
 import argparse
@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from lba.surface import BrowserSurface, Target
+from bag.surface import BrowserSurface, Target
 
 
 def main():

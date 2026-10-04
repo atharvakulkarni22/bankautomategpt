@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from lba.surface import Target
+from bag.surface import Target
 
 # What each action needs besides `reason`.
 REQUIRED_FIELDS = {

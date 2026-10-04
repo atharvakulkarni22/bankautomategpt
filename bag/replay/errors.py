@@ -10,7 +10,7 @@ The kind decides what happens next:
     UnexpectedState   anything else that does not match what we expected     -> run fails
 """
 
-from lba.surface import AmbiguousTarget, SurfaceError, SurfaceTimeout, TargetNotFound
+from bag.surface import AmbiguousTarget, SurfaceError, SurfaceTimeout, TargetNotFound
 
 
 class ReplayRefused(Exception):

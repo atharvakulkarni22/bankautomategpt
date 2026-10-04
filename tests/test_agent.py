@@ -2,15 +2,15 @@ import json
 from types import SimpleNamespace as NS
 
 import pytest
-from conftest import BANK_PASSWORD, BANK_USER
+from conftest import BANK_PASSWORD, BANK_USER, StubGuard
 from pydantic import ValidationError
 
-from lba import safety
-from lba.agent import Action, AgentLLM, Recorder, run_discovery
-from lba.agent.llm import ACT_TOOL, SYSTEM_PROMPT, NoActionError, build_prompt
-from lba.llm import ToolCall
-from lba.llm.base import LLMResponse
-from lba.surface import BrowserSurface, Observation, SurfaceError, Target, Values
+from bag.safety import Decision, Guard, SafetyConfig, Verdict
+from bag.agent import Action, AgentLLM, Recorder, run_discovery
+from bag.agent.llm import ACT_TOOL, SYSTEM_PROMPT, NoActionError, build_prompt
+from bag.llm import ToolCall
+from bag.llm.base import LLMResponse
+from bag.surface import BrowserSurface, Observation, SurfaceError, Target, Values
 
 SECRETS = {"BANK_USER": "teller-xyz", "BANK_PASSWORD": "hunter2-pw"}
 USER_BOX = Target(css='input[name="user"]')
@@ -183,6 +183,7 @@ class ScriptedLLM:
 
 def discover(tmp_path, script, surface=None, **options):
     values = options.pop("values", Values(inputs={"member_id": "1001"}, secrets=SECRETS))
+    options.setdefault("guard", StubGuard())
     surface = surface or FakeSurface()
     llm = ScriptedLLM(script)
     recorder = Recorder("goal", values.input_names, "http://bank/", "fake", tmp_path)
@@ -261,17 +262,79 @@ def test_surface_errors_are_recorded_and_shown_to_the_ai(tmp_path):
     assert result.stop_reason == "done"
 
 
-def test_safety_can_block_an_action(tmp_path):
+def test_the_guard_can_block_an_action(tmp_path):
     script = [{"action": "click", "target": {"text": "Transfer"}, "reason": "go"}, {"action": "done"}]
-    no = lambda action: safety.Verdict(False, "money movement needs approval")
-    result, surface, llm, recording = discover(tmp_path, script, safety_check=no)
+    guard = StubGuard(Decision.BLOCK, "money movement needs approval")
+    result, surface, llm, recording = discover(tmp_path, script, guard=guard)
     assert recording["steps"][0]["status"] == "blocked"
     assert "BLOCKED by safety: money movement needs approval" in llm.histories[1][0][2]
+    assert not [c for c in surface.calls if c[0] == "click"]  # the click never reached the page
+
+
+def test_the_guard_sees_the_page_and_every_name_of_the_element(tmp_path):
+    guard = StubGuard()
+    script = [{"action": "click", "target": {"css": "input.go"}, "reason": "go"}, {"action": "done"}]
+    discover(tmp_path, script, guard=guard)
+    action, context, run, step = guard.seen[0]
+    assert (run, step) == ("discovery", 1)
+    assert context.url == "http://bank/home"
+    assert [str(t) for t in context.targets] == ["Target(css='#fallback')", "Target(css='input.go')"]
+
+
+def real_guard(approver):
+    return Guard(SafetyConfig(allowed_urls=["http://bank"], risky_button_names=["transfer"]), approver=approver)
+
+
+def test_the_real_guard_asks_a_human_during_discovery_and_a_no_blocks_the_click(tmp_path):
+    asked = []
+    script = [{"action": "click", "target": {"text": "Transfer"}, "reason": "go"}, {"action": "done"}]
+    result, surface, llm, recording = discover(tmp_path, script, guard=real_guard(lambda r: asked.append(r) or False))
+    assert [(r.run, r.step, r.rule) for r in asked] == [("discovery", 1, "risky_button_names")]
+    assert recording["steps"][0]["status"] == "blocked"
+    assert "A human did not approve" in llm.histories[1][0][2]  # the AI is told, so it can choose another way
     assert not [c for c in surface.calls if c[0] == "click"]
 
 
-def test_safety_stub_allows_everything():
-    assert safety.check(Action.model_validate({"action": "done"})).allowed
+def test_the_real_guard_lets_an_approved_click_through_and_records_it(tmp_path):
+    script = [{"action": "click", "target": {"text": "Transfer"}, "reason": "go"}, {"action": "done"}]
+    result, surface, _, recording = discover(tmp_path, script, guard=real_guard(lambda r: True))
+    assert recording["steps"][0]["status"] == "ok" and [c[0] for c in surface.calls if c[0] == "click"] == ["click"]
+
+
+def test_the_real_guard_blocks_a_page_outside_the_allowlist(tmp_path):
+    class Elsewhere(FakeSurface):
+        def observe(self):
+            return Observation(url="http://evil.example/login", title="t", tree="tree", screenshot=b"\x89PNG")
+
+    script = [{"action": "click", "target": {"text": "Sign On"}, "reason": "go"}, {"action": "done"}]
+    result, surface, llm, recording = discover(tmp_path, script, surface=Elsewhere(), guard=real_guard(lambda r: True))
+    assert recording["steps"][0]["status"] == "blocked" and "not on the allowlist" in recording["steps"][0]["result"]
+    assert not [c for c in surface.calls if c[0] == "click"]
+
+
+def test_a_blocked_start_page_stops_the_run_before_the_browser_moves(tmp_path):
+    class Closed(StubGuard):
+        def check_url(self, url):
+            return Verdict(Decision.BLOCK, f"{url} is not on the allowlist.", rule="allowed_urls")
+
+    result, surface, llm, recording = discover(tmp_path, [{"action": "done"}], guard=Closed())
+    assert result.stop_reason == "error" and "Start URL blocked by safety" in result.message
+    assert surface.calls == [] and llm.histories == []
+
+
+def test_what_is_recorded_and_shown_to_the_ai_is_redacted(tmp_path):
+    class Reading(FakeSurface):
+        def read(self, target):
+            return "Account 9990000010011234 held by teller-xyz"
+
+    script = [{"action": "read", "target": {"text": "acct"}, "output_name": "account", "reason": "read it"},
+              {"action": "done", "text": "the account was 1234567890123456"}]
+    result, _, llm, recording = discover(tmp_path, script, surface=Reading())
+    shown = llm.histories[1][0][2]
+    assert "9990000010011234" not in shown and "XXXXXXXXXXXX1234" in shown and "teller-xyz" not in shown
+    text = json.dumps(recording)
+    assert "9990000010011234" not in text and "teller-xyz" not in text and "1234567890123456" not in text
+    assert result.message == "the account was XXXXXXXXXXXX3456"
 
 
 def test_llm_failure_stops_cleanly_and_keeps_the_recording(tmp_path):
@@ -312,8 +375,9 @@ def test_full_run_against_the_real_bank(tmp_path, bank_url):
             return super().propose(goal, input_names, secret_names, history, observation, step, max_steps)
 
     recorder = Recorder("look up a member", ["member_id"], bank_url, "fake", tmp_path)
+    guard = Guard(SafetyConfig(allowed_urls=[bank_url]), approver=lambda request: False)  # the real guard, nobody to ask
     with BrowserSurface(timeout_ms=4000, values=values) as surface:
-        result = run_discovery("look up a member", surface, SpyLLM(script), recorder, values, bank_url + "/")
+        result = run_discovery("look up a member", surface, SpyLLM(script), recorder, values, bank_url + "/", guard=guard)
 
     assert result.stop_reason == "done", result.message
     assert result.outputs == {"member_name": "Priya Sharma", "savings_balance": "$12,450.75"}
