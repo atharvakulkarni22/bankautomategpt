@@ -71,6 +71,8 @@ def discover(
     safety_config: Path = typer.Option("config/safety.yaml", help="The safety rules."),
     takeover: bool = typer.Option(False, "--takeover", help="When the AI asks for help, let a person take the browser. Needs --headed."),
     interventions_dir: Path = typer.Option("evidence/interventions", help="Where takeover files are saved."),
+    run_id: str = typer.Option(None, "--run-id", help="Name of this run's evidence folder (default: made from the time and the task)."),
+    evidence_dir: Path = typer.Option("evidence", help="Where run folders are saved."),
 ) -> None:
     """Let the agent explore the bank app to reach a goal, and record what it did."""
     # Imported here so `bag --help` stays fast.
@@ -79,6 +81,7 @@ def discover(
     from bag.agent import AgentLLM, Recorder, run_discovery
     from bag.handoff import HumanTakeover
     from bag.llm import LLMConfigError, get_client
+    from bag.logging import RunLogError, RunLogger
     from bag.surface import BrowserSurface, Values
 
     if takeover and not headed:
@@ -93,6 +96,11 @@ def discover(
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1)
 
+    try:
+        run_log = RunLogger("discovery", goal, evidence_dir, run_id, redactor)
+    except RunLogError as error:
+        _fail(str(error))
+
     recorder = Recorder(goal, values.input_names, start_url, getattr(client, "model", "unknown"), output_dir, redactor)
     typer.echo(redactor.text(f"Goal: {goal}\nModel: {recorder.data['model']}\nRecording: {recorder.path}\n"))
     surface = BrowserSurface(
@@ -100,10 +108,13 @@ def discover(
         blur_screenshots=config.blur_screenshots, blur_selectors=config.blur_selectors,
     )
     with surface:
-        handoff = HumanTakeover(surface, directory=interventions_dir, redactor=redactor) if takeover else None
+        handoff = (
+            HumanTakeover(surface, directory=interventions_dir, redactor=redactor, run_log=run_log) if takeover else None
+        )
         result = run_discovery(
             goal, surface, AgentLLM(client, use_screenshot=not no_screenshot), recorder, values, start_url,
-            guard=guard, redactor=redactor, takeover=handoff, max_steps=max_steps, max_seconds=max_seconds,
+            guard=guard, redactor=redactor, takeover=handoff, run_log=run_log, max_steps=max_steps,
+            max_seconds=max_seconds,
         )
 
     for item in result.interventions:
@@ -115,6 +126,7 @@ def discover(
         label = "Question for you" if result.stop_reason == "ask_human" else "Note"
         typer.echo(f"{label}: {redactor.text(result.message)}")
     typer.echo(f"Recording saved to {result.recording_path}")
+    typer.echo(f"Evidence saved to {run_log.directory}")
     if result.stop_reason != "done":
         raise typer.Exit(1)
 
@@ -127,10 +139,11 @@ def replay(
     start_url: str = typer.Option(None, "--start-url", help="Where to begin (default: the artifact's, on BANK_URL's host)."),
     timeout: float = typer.Option(10.0, help="Seconds to wait for each element or expected state."),
     artifacts_dir: Path = typer.Option("artifacts", help="Where artifacts are saved."),
-    screenshot_dir: Path = typer.Option("evidence/screenshots", help="Where a failure screenshot is saved."),
     safety_config: Path = typer.Option("config/safety.yaml", help="The safety rules."),
     takeover: bool = typer.Option(False, "--takeover", help="When a step cannot be done, let a person take the browser. Needs --headed."),
     interventions_dir: Path = typer.Option("evidence/interventions", help="Where takeover files are saved."),
+    run_id: str = typer.Option(None, "--run-id", help="Name of this run's evidence folder (default: made from the time and the task)."),
+    evidence_dir: Path = typer.Option("evidence", help="Where run folders are saved."),
 ) -> None:
     """Replay an approved artifact with new inputs. No LLM is used.
 
@@ -141,6 +154,7 @@ def replay(
 
     from bag.artifact import ArtifactError, load_artifact, resolve_artifact_path
     from bag.handoff import HumanTakeover
+    from bag.logging import RunLogError, RunLogger
     from bag.replay import BUSINESS_OUTCOME, SUCCESS, Replayer, ReplayRefused, prepare_run, resolve_start_url
     from bag.surface import BrowserSurface, Values
 
@@ -157,21 +171,28 @@ def replay(
     config, guard, redactor = _safety(safety_config, values)
     url = start_url or resolve_start_url(loaded.metadata.start_url, os.environ.get("BANK_URL"))
     meta = loaded.metadata
+    try:
+        run_log = RunLogger("replay", f"{meta.name}-v{meta.version}", evidence_dir, run_id, redactor)
+    except RunLogError as error:
+        _fail(str(error))
     typer.echo(f"Replaying {meta.name} v{meta.version} from {url}")
     surface = BrowserSurface(
         headless=not headed, timeout_ms=int(timeout * 1000), values=values,
         blur_screenshots=config.blur_screenshots, blur_selectors=config.blur_selectors,
     )
     with surface:
-        handoff = HumanTakeover(surface, directory=interventions_dir, redactor=redactor) if takeover else None
+        handoff = (
+            HumanTakeover(surface, directory=interventions_dir, redactor=redactor, run_log=run_log) if takeover else None
+        )
         result = Replayer(
-            loaded, surface, guard=guard, redactor=redactor, handoff=handoff, start_url=url, timeout_s=timeout,
-            screenshot_dir=screenshot_dir,
+            loaded, surface, guard=guard, redactor=redactor, handoff=handoff, run_log=run_log, start_url=url,
+            timeout_s=timeout,
         ).run()
 
     for entry in result.log:
         where = f"step {entry.step}" if entry.step else "run"
         typer.echo(f"  {where}: {entry.message}" if entry.kind != "fallback" else f"  {where}: FALLBACK {entry.message}")
+    typer.echo(f"Evidence saved to {run_log.directory}")
 
     if result.status == SUCCESS:
         typer.echo(f"SUCCESS in {result.seconds:.1f}s")

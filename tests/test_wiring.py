@@ -255,9 +255,19 @@ def test_cli_discover_runs_the_whole_guarded_loop(tmp_path, monkeypatch, bank_ur
 
     monkeypatch.setattr("bag.llm.get_client", lambda *a, **k: ScriptedClient())
     result = CliRunner().invoke(app, ["discover", "--goal", "Sign on", "--start-url", bank_url, "--max-steps", "8",
-                                      "--output-dir", str(tmp_path / "rec"), "--safety-config", str(rules)])
+                                      "--output-dir", str(tmp_path / "rec"), "--safety-config", str(rules),
+                                      "--run-id", "d1", "--evidence-dir", str(tmp_path / "evidence")])
     assert result.exit_code == 0, result.output
     assert "Stopped: done after 5 step(s)" in result.output
+    assert f"Evidence saved to {tmp_path / 'evidence' / 'd1'}" in result.output
+
+    folder = tmp_path / "evidence" / "d1"
+    entries = [json.loads(line) for line in (folder / "steps.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [e["event"] for e in entries] == ["start", "step", "step", "step", "step", "step", "stop"]
+    final = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    assert final["status"] == "done" and final["steps"] == 5 and final["screenshots"] == []
+    folder_text = (folder / "steps.jsonl").read_text(encoding="utf-8") + (folder / "result.json").read_text(encoding="utf-8")
+    assert BANK_USER not in folder_text and BANK_PASSWORD not in folder_text and "{{secret:BANK_USER}}" in folder_text
 
     recording = next((tmp_path / "rec").glob("*.json")).read_text(encoding="utf-8")
     assert BANK_USER not in recording and BANK_PASSWORD not in recording and "{{secret:BANK_USER}}" in recording

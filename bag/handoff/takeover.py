@@ -64,6 +64,7 @@ class Intervention:
     events_file: Path | None = None  # what the human did, as JSON
     event_count: int = 0
     summary: str = ""  # what the human did, in one line (typed values are never included)
+    run_id: str | None = None
 
     def to_dict(self) -> dict:
         return {key: (str(value) if isinstance(value, Path) else value) for key, value in asdict(self).items()}
@@ -94,6 +95,7 @@ class HumanTakeover:
         sleep=None,
         out=print,
         require_headed: bool = True,
+        run_log=None,
     ):
         # A human cannot work in a window they cannot see. A headless run that blocked forever waiting
         # for one would hang a scheduled job, so it is refused up front. (require_headed=False exists
@@ -103,7 +105,11 @@ class HumanTakeover:
         self.surface = surface
         self.directory = Path(directory)
         self.redactor = redactor or Redactor()
-        self.controller = controller or ControlController(self.redactor, self.directory / "transitions.jsonl")
+        self.run_log = run_log
+        self._step: int | None = None
+        self.controller = controller or ControlController(
+            self.redactor, self.directory / "transitions.jsonl", sink=self._to_run_log
+        )
         self.recorder = HumanRecorder(surface, self.redactor)
         self.timeout_s = timeout_s
         self.max_interventions = max_interventions  # per run: a step that keeps needing a human is a real problem
@@ -118,9 +124,11 @@ class HumanTakeover:
     def take_over(self, *, kind, goal, label, step, action, reason, error=None, expected=None, observed=None) -> TakeoverResult:
         """Pause, hand the browser to a human, wait, collect what they did. Returns when it is over."""
         # 1. PAUSE
+        self._step = step
         intervention = self._new_intervention(kind, goal, label, step, action, reason, error, expected, observed)
         self.controller.transition(ControlState.PAUSED_FOR_HUMAN, f"{label}: {intervention.reason}", intervention.id)
         self._save(intervention)
+        self._log("intervention", intervention.step, intervention=intervention.to_dict())
         self.out(json.dumps(intervention.to_dict(), indent=2, ensure_ascii=False))
 
         # 2. HAND OVER
@@ -187,6 +195,10 @@ class HumanTakeover:
                                "timeout": "timed_out", "closed": "browser_closed"}[how]
         intervention.resumed_by = how if resumed else None
         self._save(intervention)
+        self._log(
+            "finished", intervention.step, intervention=intervention.id, status=intervention.status, via=how,
+            event_count=len(events), summary=intervention.summary, events=events,
+        )
 
         if resumed:
             self.controller.transition(
@@ -211,15 +223,29 @@ class HumanTakeover:
 
         try:
             observation = self.surface.observe()  # the screenshot comes back already blurred
-            url, screenshot = observation.url, self.directory / f"{name}.png"
-            screenshot.write_bytes(observation.screenshot)
+            url = observation.url
+            if self.run_log is not None:
+                screenshot = self.run_log.screenshot(f"handoff-step{step}" if step else "handoff", observation.screenshot)
+            else:
+                screenshot = self.directory / f"{name}.png"
+                screenshot.write_bytes(observation.screenshot)
         except (SurfaceError, OSError):
             url, screenshot = "(unknown)", None
         return Intervention(
             id=name, path=self.directory / f"{name}.json", kind=kind, label=clean(label), goal=clean(goal), step=step,
             action=action, error=error, reason=clean(reason), expected=clean(expected) if expected else None,
             observed=clean(observed) if observed else None, url=clean(url), created_at=_now(), screenshot=screenshot,
+            run_id=self.run_log.run_id if self.run_log is not None else None,
         )
+
+    def _log(self, event: str, step: int | None, **details) -> None:
+        if self.run_log is not None:
+            self.run_log.step("handoff", event, step=step, **details)
+
+    def _to_run_log(self, record: dict) -> None:
+        event = record.get("event", record["kind"])
+        details = {key: value for key, value in record.items() if key not in ("kind", "time", "event")}
+        self._log(event, self._step, **details)
 
     def _save(self, intervention: Intervention) -> None:
         temp = intervention.path.with_suffix(".tmp")  # write, then swap: a reader never sees half a file

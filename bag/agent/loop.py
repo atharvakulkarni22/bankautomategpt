@@ -85,6 +85,7 @@ def run_discovery(
     guard,
     redactor=None,
     takeover=None,
+    run_log=None,
     max_steps=25,
     max_seconds=180,
     clock=time.monotonic,
@@ -113,7 +114,31 @@ def run_discovery(
     def finish(stop_reason, steps_taken, text=""):
         text = redactor.text(text)
         recorder.finish(stop_reason, outputs, text)
+        if run_log is not None:
+            shot = None
+            if stop_reason != STOP_DONE:
+                try:
+                    shot = run_log.screenshot(f"stopped-{stop_reason}", surface.observe().screenshot).name
+                except SurfaceError:
+                    shot = None
+            run_log.step("agent", "stop", reason=stop_reason, message=text, screenshot=shot)
+            run_log.finish(
+                stop_reason, steps=steps_taken, outputs=redactor.data(outputs), message=text,
+                recording=str(recorder.path), interventions=[item.id for item in taken_over],
+            )
         return DiscoveryResult(stop_reason, steps_taken, redactor.data(outputs), recorder.path, text, taken_over)
+
+    def record(index, url, reason, status, result, action=None, candidates=(), raw=None, human_events=None):
+        recorder.add_step(index, url, reason, status, result, action=action, candidates=candidates, raw=raw,
+                          human_events=human_events)
+        if run_log is not None:
+            run_log.step(
+                "agent", "step", step=index, url=url, status=status, action=action.summary() if action else None,
+                reason=reason, result=result, candidates=len(candidates),
+            )
+
+    if run_log is not None:
+        run_log.step("agent", "start", goal=goal, url=start_url, inputs=values.input_names)
 
     # The browser may only start on an allowed site.
     verdict = guard.check_url(start_url)
@@ -144,7 +169,7 @@ def run_discovery(
             )
         except NoActionError as error:
             problem = redactor.text(error)
-            recorder.add_step(index, observation.url, "", "invalid", problem)
+            record(index, observation.url, "", "invalid", problem)
             history.append((index, "(no action)", f"INVALID: {problem}"))
             continue
         except Exception as error:  # provider or network failure: stop, keep the recording
@@ -156,7 +181,7 @@ def run_discovery(
             action = Action.model_validate(raw)
         except ValidationError as error:
             problem = _short(error.errors()[0]["msg"])
-            recorder.add_step(index, observation.url, "", "invalid", f"INVALID ACTION: {problem}", raw=raw)
+            record(index, observation.url, "", "invalid", f"INVALID ACTION: {problem}", raw=raw)
             history.append((index, "(invalid action)", f"INVALID: {problem}"))
             continue
         action = action.protected(values)  # a literal real value becomes its placeholder
@@ -168,7 +193,7 @@ def run_discovery(
         verdict = guard.authorize(action, context, run="discovery", step=index)
         if verdict.decision is not Decision.ALLOW:
             result = redactor.text(f"BLOCKED by safety: {verdict.reason}")
-            recorder.add_step(index, observation.url, action.reason, "blocked", result, action=action)
+            record(index, observation.url, action.reason, "blocked", result, action=action)
             history.append((index, action.summary(), result))
             continue
 
@@ -183,7 +208,7 @@ def run_discovery(
             taken_over.append(taken.intervention)
             if not taken.aborted:
                 shown = redactor.text(f"A human took over and did: {taken.summary}")
-                recorder.add_step(index, observation.url, action.reason, "human", shown, action=action,
+                record(index, observation.url, action.reason, "human", shown, action=action,
                                   human_events=taken.events)
                 history.append((index, action.summary(), shown))  # the AI learns what changed (typed values never included)
                 continue
@@ -191,7 +216,7 @@ def run_discovery(
 
         # 5b. The AI can end the run itself.
         if action.action in ("done", "ask_human"):
-            recorder.add_step(index, observation.url, action.reason, "ok", action.action, action=action)
+            record(index, observation.url, action.reason, "ok", action.action, action=action)
             stop = STOP_DONE if action.action == "done" else STOP_ASK_HUMAN
             message = action.text or ""
             break
@@ -204,7 +229,7 @@ def run_discovery(
         except SurfaceError as error:
             result, status = f"ERROR: {_short(error, 500)}", "error"
         result = redactor.text(result)  # a value that was read may hold an account number
-        recorder.add_step(
+        record(
             index, observation.url, action.reason, status, result, action=action, candidates=candidates
         )
         history.append((index, action.summary(), result))

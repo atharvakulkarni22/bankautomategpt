@@ -61,11 +61,12 @@ def _now() -> str:
 
 
 class ControlController:
-    def __init__(self, redactor: Redactor | None = None, log_path=None):
+    def __init__(self, redactor: Redactor | None = None, log_path=None, sink=None):
         self.state = ControlState.AUTOMATION
         self.history: list[Transition] = []
         self.redactor = redactor or Redactor()
         self.log_path = Path(log_path) if log_path else None  # one JSON line per transition, if given
+        self.sink = sink
 
     def transition(self, target: ControlState, reason: str, intervention: str | None = None) -> Transition:
         """Move to a new state, or raise InvalidTransition (and stay where we are)."""
@@ -88,6 +89,8 @@ class ControlController:
                      "reason": reason, "intervention": intervention})
 
     def _write(self, record: dict) -> None:
+        if self.sink is not None:
+            self.sink(record)
         if self.log_path is None:
             return
         self.log_path.parent.mkdir(parents=True, exist_ok=True)

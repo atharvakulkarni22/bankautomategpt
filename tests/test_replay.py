@@ -589,10 +589,10 @@ def cli(tmp_path, monkeypatch, bank_url):
 
     def run(*args):
         return CliRunner().invoke(app, ["replay", "--artifacts-dir", str(folder),
-                                        "--screenshot-dir", str(tmp_path / "shots"), "--timeout", "3",
+                                        "--evidence-dir", str(tmp_path / "evidence"), "--timeout", "3",
                                         "--safety-config", str(rules), *args])  # later options win
 
-    run.folder, run.shots, run.rules, run.audit = folder, tmp_path / "shots", rules, tmp_path / "audit.jsonl"
+    run.folder, run.evidence, run.rules, run.audit = folder, tmp_path / "evidence", rules, tmp_path / "audit.jsonl"
     return run
 
 
@@ -628,4 +628,4 @@ def test_cli_prints_where_a_failure_happened(cli):
     assert result.exit_code == 1
     assert "FAILURE at step 3 (click): UnexpectedState" in result.output
     assert "expected: the page address to contain '/nowhere'" in result.output
-    assert any(p.suffix == ".png" for p in cli.shots.iterdir()) and "screenshot:" in result.output
+    assert len(list(cli.evidence.glob("*/screenshots/failure-step3.png"))) == 1 and "screenshot:" in result.output

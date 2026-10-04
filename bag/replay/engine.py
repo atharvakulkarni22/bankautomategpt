@@ -155,6 +155,7 @@ class Replayer:
         guard,
         redactor: Redactor | None = None,
         handoff=None,
+        run_log=None,
         start_url: str | None = None,
         timeout_s: float = 10.0,
         max_retries: int = 2,
@@ -177,6 +178,7 @@ class Replayer:
         self.redactor = redactor or Redactor()  # scrubs every log line and failure report
         # Optional: a bag.handoff.HumanTakeover. Without one, a stuck step simply fails the run.
         self.handoff = handoff
+        self.run_log = run_log
         self.interventions: list = []
         self._handovers = 0
         self.clock = clock
@@ -193,6 +195,32 @@ class Replayer:
     # ------------------------------------------------------------------- run
 
     def run(self) -> RunResult:
+        if self.run_log is not None:
+            meta = self.artifact.metadata
+            self.run_log.step("replay", "start", url=self.start_url, artifact=f"{meta.name} v{meta.version}")
+        result = self._execute()
+        if self.run_log is not None:
+            self._write_result(result)
+        return result
+
+    def _write_result(self, result: RunResult) -> None:
+        failure = result.failure
+        self.run_log.finish(
+            result.status,
+            artifact=result.artifact,
+            outputs={name: str(value) for name, value in result.outputs.items()},
+            outcome_code=result.outcome_code,
+            message=result.message,
+            failure=None if failure is None else {
+                "step": failure.step, "phase": failure.phase, "action": failure.action, "error": failure.error,
+                "message": failure.message, "expected": failure.expected, "observed": failure.observed,
+                "screenshot": failure.screenshot.name if failure.screenshot else None,
+            },
+            interventions=[item.id for item in result.interventions],
+            log_entries=len(result.log),
+        )
+
+    def _execute(self) -> RunResult:
         started = self.clock()
         name = f"{self.artifact.metadata.name} v{self.artifact.metadata.version}"
         try:
@@ -441,9 +469,11 @@ class Replayer:
         message = self.redactor.text(message)  # every log line is scrubbed before it is kept or printed
         self.log.append(LogEntry(step, kind, message))
         logger.info("step %s %s: %s", step, kind, message)
+        if self.run_log is not None:
+            self.run_log.step("replay", kind, step=step, message=message)
 
     def _failure(self, problem: ReplayError) -> Failure:
-        return Failure(
+        failure = Failure(
             step=self._step_number,
             phase=self._phase,
             action=self._action,
@@ -453,6 +483,13 @@ class Replayer:
             observed=self.redactor.text(problem.observed) if problem.observed else None,
             screenshot=self._take_screenshot(),
         )
+        if self.run_log is not None:
+            self.run_log.step(
+                "replay", "failure", step=failure.step, phase=failure.phase, action=failure.action, error=failure.error,
+                message=failure.message, expected=failure.expected, observed=failure.observed,
+                screenshot=failure.screenshot.name if failure.screenshot else None,
+            )
+        return failure
 
     def _take_screenshot(self) -> Path | None:
         """Save what the screen looked like at the moment of failure. Never fails the report.
@@ -462,6 +499,9 @@ class Replayer:
         """
         try:
             png = self.surface.observe().screenshot
+            if self.run_log is not None:
+                where = f"step{self._step_number}" if self._step_number else self._phase
+                return self.run_log.screenshot(f"failure-{where}", png)
             self.screenshot_dir.mkdir(parents=True, exist_ok=True)
             when = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             meta = self.artifact.metadata
