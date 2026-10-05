@@ -8,7 +8,7 @@ page. The model answers by calling the single `act` tool.
 from bag.llm import LLMClient, Message, ToolSpec
 from bag.surface import Observation
 
-from .actions import tool_schema
+from .actions import VALID_TARGET_EXAMPLES, tool_schema
 
 SYSTEM_PROMPT = """\
 You are the discovery agent of a bank-automation tool. A person gave you a goal in a legacy bank web application. You work out how to reach it by looking at the page and doing ONE action at a time. Your steps are recorded and later replayed without you, so every step must be deliberate and repeatable.
@@ -25,7 +25,7 @@ ACTIONS
 Always give a one-sentence reason.
 
 TARGETS
-A target describes ONE element with exactly one of: role (with name), label, text, css. Prefer them in that order. Copy role and name from the accessibility tree (for example role=button, name=Search). Content of iframes is nested under the iframe node in the tree. The section "Fields with no accessible name" lists fields the tree cannot name; target those with the css shown. A target must match exactly one element. If an action fails with "matches N elements", make the target more specific.
+A target describes ONE element with exactly one of: role (with name), label, text, css. Prefer them in that order. Buttons, links and textboxes are {role, name}, copied from the accessibility tree (for example role=button, name=Search). Never combine role with text: a button is {role: "button", name: "Sign On"}, never {role: "button", text: "Sign On"}. Use text only for plain text that is not a control. Content of iframes is nested under the iframe node in the tree. The section "Fields with no accessible name" lists fields the tree cannot name; target those with the css shown. A target must match exactly one element. If an action fails with "matches N elements", make the target more specific.
 
 VALUES YOU MUST NEVER WRITE LITERALLY
 - Inputs: to enter a value the person supplied, write {{input_name}} (for example {{member_id}}). You never see the real value.
@@ -37,6 +37,8 @@ SAFETY
 - Do only what the goal asks. Do not submit, confirm, transfer or open anything the goal did not ask for.
 - If a popup or dialog blocks the page, dismiss it first (for example click OK).
 - If something fails, do not repeat the same action unchanged. For a timed-out session, sign on again. For a permission error or anything else you cannot fix, use ask_human.
+- A password field always looks empty in the accessibility tree. The STEPS SO FAR list tells you when you typed into it ("typed into password field (value hidden) - OK"): do not type it again.
+- If the last action was reported invalid, change it. Trying the same action three times in a row ends the run as stuck.
 """
 
 ACT_TOOL = ToolSpec(
@@ -50,11 +52,24 @@ class NoActionError(RuntimeError):
     """The model did not call the act tool."""
 
 
+def _history_line(entry) -> str:
+    if len(entry) > 3:
+        return f"{entry[0]}. {entry[3]}"
+    index, summary, result = entry
+    return f"{index}. {summary} -> {result}"
+
+
 def build_prompt(goal, input_names, secret_names, history, observation, step, max_steps) -> str:
-    """The user message. `history` is a list of (index, action summary, result)."""
+    """The user message. `history` holds HistoryEntry items (or plain (index, summary, result) tuples)."""
     inputs = ", ".join("{{%s}}" % n for n in input_names) or "none"
     secrets = ", ".join("{{secret:%s}}" % n for n in secret_names) or "none"
-    steps = "\n".join(f"{i}. {summary} -> {result}" for i, summary, result in history) or "(none yet)"
+    steps = "\n".join(_history_line(entry) for entry in history) or "(none yet)"
+    last = history[-1] if history else None
+    feedback = ""
+    if last is not None and getattr(last, "status", "") == "invalid":
+        feedback = (
+            f"Your last action was invalid: {last.problem.rstrip('.')}. Valid target examples: {VALID_TARGET_EXAMPLES}.\n\n"
+        )
     return (
         f"GOAL\n{goal}\n\n"
         f"INPUTS you may type: {inputs}\n"
@@ -62,6 +77,7 @@ def build_prompt(goal, input_names, secret_names, history, observation, step, ma
         f"STEPS SO FAR (this is step {step} of at most {max_steps})\n{steps}\n\n"
         f"CURRENT PAGE\nURL: {observation.url}\nTitle: {observation.title}\n"
         f"Accessibility tree:\n{observation.tree}\n\n"
+        f"{feedback}"
         "Choose the next step by calling the act tool."
     )
 

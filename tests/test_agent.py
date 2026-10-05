@@ -232,7 +232,8 @@ def test_ask_human_stops_with_the_question(tmp_path):
 
 
 def test_stops_at_the_step_limit(tmp_path):
-    result, surface, _, _ = discover(tmp_path, [], max_steps=3)  # the script endlessly clicks
+    script = [{"action": "click", "target": {"css": name}} for name in ("a", "b", "c")]
+    result, surface, _, _ = discover(tmp_path, script, max_steps=3)
     assert (result.stop_reason, result.steps) == ("max_steps", 3)
     assert [c[0] for c in surface.calls].count("click") == 3
 

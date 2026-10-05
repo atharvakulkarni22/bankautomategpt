@@ -268,7 +268,7 @@ def test_the_time_a_human_takes_does_not_count_against_the_time_limit(bank_url, 
     now = [0.0]
 
     def slow_human(surface, turn):
-        now[0] += 10_000  # the person took almost three hours; the limit is 180 seconds
+        now[0] += 10_000  # the person took almost three hours; the limit is 600 seconds
         sign_on_by_hand(surface, turn)
 
     result, _, _ = discover_with_human(bank_url, tmp_path, [ASK, DONE], slow_human, clock=lambda: now[0])

@@ -20,10 +20,10 @@ class Target(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)  # frozen = hashable, safe to compare
 
     # The descriptions below are shown to the AI (they end up in its tool schema).
-    role: str | None = Field(None, description="Accessibility role, e.g. button, link, textbox, heading, combobox. Use with name.")
+    role: str | None = Field(None, description="Accessibility role of a button, link or textbox, e.g. button, link, textbox, heading, combobox. Use with name.")
     name: str | None = Field(None, description="Accessible name of the element, as shown in the tree. Only together with role.")
     label: str | None = Field(None, description="Text of the field's <label>.")
-    text: str | None = Field(None, description="Visible text of the element.")
+    text: str | None = Field(None, description="Visible text. Only for plain text that is not a control, never together with role.")
     css: str | None = Field(None, description="CSS selector. Last resort; use the ones listed for fields with no accessible name.")
     # True = whole-text match; False (default) = substring, ignoring case.
     # Applies to name, label and text; css ignores it.
@@ -33,7 +33,8 @@ class Target(BaseModel):
     def _exactly_one_strategy(self):
         used = [s for s in ("role", "label", "text", "css") if getattr(self, s) is not None]
         if len(used) != 1:
-            raise ValueError(f"A Target needs exactly one of role, label, text, css (got {used or 'none'}).")
+            hint = " Buttons, links and textboxes are {role, name}, never {role, text}." if {"role", "text"} <= set(used) else ""
+            raise ValueError(f"A Target needs exactly one of role, label, text, css (got {used or 'none'}).{hint}")
         if self.name is not None and self.role is None:
             raise ValueError("'name' only makes sense together with 'role'.")
         return self

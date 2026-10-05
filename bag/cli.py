@@ -65,7 +65,7 @@ def discover(
     start_url: str = typer.Option(None, "--start-url", help="Where to begin (default: BANK_URL)."),
     headed: bool = typer.Option(False, "--headed", help="Show the browser window."),
     max_steps: int = typer.Option(25, help="Stop after this many steps."),
-    max_seconds: int = typer.Option(180, help="Stop after this many seconds."),
+    max_seconds: int = typer.Option(600, help="Stop after this many seconds."),
     no_screenshot: bool = typer.Option(False, "--no-screenshot", help="Do not send screenshots (for text-only models)."),
     output_dir: Path = typer.Option("evidence/recordings", help="Where the recording is saved."),
     safety_config: Path = typer.Option("config/safety.yaml", help="The safety rules."),
@@ -108,17 +108,20 @@ def discover(
         blur_screenshots=config.blur_screenshots, blur_selectors=config.blur_selectors,
     )
     with surface:
-        handoff = (
-            HumanTakeover(surface, directory=interventions_dir, redactor=redactor, run_log=run_log) if takeover else None
+        desk = HumanTakeover(
+            surface, directory=interventions_dir, redactor=redactor, run_log=run_log, require_headed=takeover
         )
         result = run_discovery(
             goal, surface, AgentLLM(client, use_screenshot=not no_screenshot), recorder, values, start_url,
-            guard=guard, redactor=redactor, takeover=handoff, run_log=run_log, max_steps=max_steps,
-            max_seconds=max_seconds,
+            guard=guard, redactor=redactor, takeover=desk if takeover else None, help_desk=desk, run_log=run_log,
+            max_steps=max_steps, max_seconds=max_seconds,
         )
 
     for item in result.interventions:
-        typer.echo(f"A human took over at step {item.step} ({item.status}, {item.event_count} action(s)): {item.path}")
+        if item.status == "requested":
+            typer.echo(f"Human help requested at step {item.step}: {item.path}")
+        else:
+            typer.echo(f"A human took over at step {item.step} ({item.status}, {item.event_count} action(s)): {item.path}")
     typer.echo(f"Stopped: {result.stop_reason} after {result.steps} step(s).")
     for name, value in result.outputs.items():
         typer.echo(f"  {name} = {redactor.text(value)}")

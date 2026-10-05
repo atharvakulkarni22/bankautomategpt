@@ -58,7 +58,7 @@ class Intervention:
     url: str  # the page the browser was on
     created_at: str
     screenshot: Path | None = None
-    status: str = "waiting"  # waiting -> resumed | aborted | timed_out | browser_closed
+    status: str = "waiting"  # waiting -> resumed | aborted | timed_out | browser_closed; requested = saved for later, nobody waiting
     resumed_by: str | None = None  # "enter" or "flag"
     finished_at: str | None = None
     events_file: Path | None = None  # what the human did, as JSON
@@ -159,6 +159,17 @@ class HumanTakeover:
         except SurfaceError:
             pass
         return self._finish(intervention, how, events)
+
+    def request_help(self, *, kind, goal, label, step, action, reason, error=None, expected=None, observed=None) -> Intervention:
+        self._step = step
+        intervention = self._new_intervention(kind, goal, label, step, action, reason, error, expected, observed)
+        self.controller.transition(ControlState.PAUSED_FOR_HUMAN, f"{label}: {intervention.reason}", intervention.id)
+        intervention.status = "requested"
+        self._save(intervention)
+        self._log("intervention", step, intervention=intervention.to_dict())
+        self.out(json.dumps(intervention.to_dict(), indent=2, ensure_ascii=False))
+        self.out(f"Human help requested. Nobody is waiting live: the request is saved in {intervention.path}.")
+        return intervention
 
     # ---------------------------------------------------------------- the pieces
 

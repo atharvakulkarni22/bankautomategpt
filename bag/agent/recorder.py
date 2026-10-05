@@ -44,7 +44,7 @@ class Recorder:
         }
         self._save()
 
-    def add_step(self, index, url, reason, status, result, action=None, candidates=(), raw=None, human_events=None):
+    def add_step(self, index, url, reason, status, result, action=None, candidates=(), raw=None, human_events=None, repaired=None):
         """Record one step. `action` is None when the model's output was unusable (then `raw` is kept)."""
         step = {
             "index": index,
@@ -58,6 +58,8 @@ class Recorder:
         }
         if raw is not None:
             step["raw"] = raw
+        if repaired is not None:
+            step["repaired"] = repaired
         if human_events is not None:  # a human took over at this step: what they clicked and typed
             step["human_events"] = human_events
         self.data["steps"].append(self.redactor.data(step))
