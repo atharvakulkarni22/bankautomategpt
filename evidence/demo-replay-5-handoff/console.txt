@@ -1,0 +1,48 @@
+$ bag replay handoff-test --input member_id=1003 --headed --takeover --timeout 3
+Replaying handoff-test v1 from http://127.0.0.1:5059
+{
+  "id": "20261006-040212-replay-handoff-test-v1-step6",
+  "path": "D:\\Assesment\\BankAutomateGPT\\evidence\\demo-replay-5-handoff\\interventions\\20261006-040212-replay-handoff-test-v1-step6.json",
+  "kind": "replay",
+  "label": "replay handoff-test v1",
+  "goal": "Log in and find the savings balance for the member",
+  "step": 6,
+  "action": "click",
+  "error": "LocatorNotFound",
+  "reason": "Could not find the element for step 6 (click).",
+  "expected": "an element matching Target(role='button', name='Does Not Exist') (or one of 0 fallback(s))",
+  "observed": "None of the 1 target(s) matched: No element matches Target(role='button', name='Does Not Exist').",
+  "url": "http://127.0.0.1:5059/home",
+  "created_at": "2026-10-06T04:02:12+00:00",
+  "screenshot": "D:\\Assesment\\BankAutomateGPT\\evidence\\demo-replay-5-handoff\\screenshots\\handoff-step6.png",
+  "status": "waiting",
+  "resumed_by": null,
+  "finished_at": null,
+  "events_file": null,
+  "event_count": 0,
+  "summary": "",
+  "run_id": "demo-replay-5-handoff"
+}
+
+=== HUMAN TAKEOVER ===
+Automation is paused and the browser is yours.
+  1. Do what the step needed, in the browser window.
+  2. Then press Enter here, or run `bag resume 20261006-040212-replay-handoff-test-v1-step6` in another terminal.
+  Type q and press Enter to give up on this run.
+Resuming automation. The human did: nothing was recorded
+  step 1: type ok via primary
+  step 2: type ok via primary
+  step 3: click ok via primary
+  step 4: type ok via primary
+  step 5: click ok via primary
+  step 6: A human took over (resumed via flag) and did: nothing was recorded
+  step 7: read ok via primary
+Evidence saved to D:\Assesment\BankAutomateGPT\evidence\demo-replay-5-handoff
+SUCCESS in 5.4s
+  savings_balance = 250000.00
+
+$ bag resume
+Resume requested for 20261006-040212-replay-handoff-test-v1-step6 (step 6: Could not find the element for step 6 (click).).
+The paused run will carry on within a second or two.
+
+(exit code 0)

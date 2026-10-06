@@ -1,0 +1,23 @@
+{
+  "id": "20261006-040212-replay-handoff-test-v1-step6",
+  "path": "D:\\Assesment\\BankAutomateGPT\\evidence\\demo-replay-5-handoff\\interventions\\20261006-040212-replay-handoff-test-v1-step6.json",
+  "kind": "replay",
+  "label": "replay handoff-test v1",
+  "goal": "Log in and find the savings balance for the member",
+  "step": 6,
+  "action": "click",
+  "error": "LocatorNotFound",
+  "reason": "Could not find the element for step 6 (click).",
+  "expected": "an element matching Target(role='button', name='Does Not Exist') (or one of 0 fallback(s))",
+  "observed": "None of the 1 target(s) matched: No element matches Target(role='button', name='Does Not Exist').",
+  "url": "http://127.0.0.1:5059/home",
+  "created_at": "2026-10-06T04:02:12+00:00",
+  "screenshot": "D:\\Assesment\\BankAutomateGPT\\evidence\\demo-replay-5-handoff\\screenshots\\handoff-step6.png",
+  "status": "resumed",
+  "resumed_by": "flag",
+  "finished_at": "2026-10-06T04:02:14+00:00",
+  "events_file": null,
+  "event_count": 0,
+  "summary": "nothing was recorded",
+  "run_id": "demo-replay-5-handoff"
+}

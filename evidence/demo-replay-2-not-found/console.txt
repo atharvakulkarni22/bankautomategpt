@@ -1,0 +1,12 @@
+$ bag replay member-balance --input member_id=9999
+Replaying member-balance v1 from http://127.0.0.1:5059
+  step 1: type ok via primary
+  step 2: type ok via primary
+  step 3: click ok via primary
+  step 4: type ok via primary
+  step 5: click ok via primary
+  step 6: ended with business outcome NOT_FOUND
+Evidence saved to D:\Assesment\BankAutomateGPT\evidence\demo-replay-2-not-found
+BUSINESS OUTCOME: NOT_FOUND (The page says 'No member found'.)
+
+(exit code 2)

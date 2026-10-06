@@ -1,0 +1,99 @@
+# bag artifact: a saved, reusable task. Safe to edit by hand; it is checked every time it loads.
+# status draft = not yet reviewed. Run `bag approve <name>` once you have read it through.
+# Secrets appear only as {{secret:NAME}} placeholders, never as real values.
+metadata:
+  name: handoff-test
+  version: 1
+  app: First Legacy Bank
+  description: Log in and find the savings balance for the member
+  status: approved
+  start_url: http://127.0.0.1:5000
+  source_recording: 20261006-032607-log-in-and-find-the-savings-balance-for-.json
+inputs:
+- name: member_id
+  type: string
+  description: Describe this input (member_id). Edit me.
+steps:
+- action: type
+  locator:
+    primary:
+      role: textbox
+      name: 'User name:'
+    fallbacks:
+    - label: 'User name:'
+    - css: input[name="user"]
+    why: Enter the bank user name to sign in.
+  text: '{{secret:BANK_USER}}'
+- action: type
+  locator:
+    primary:
+      css: input[name="pw"]
+    fallbacks: []
+    why: Type the bank password into the password field
+  text: '{{secret:BANK_PASSWORD}}'
+- action: click
+  locator:
+    primary:
+      role: button
+      name: Sign On
+    fallbacks:
+    - css: body > center > table > tbody > tr:nth-of-type(2) > td > form > table > tbody > tr:nth-of-type(3)
+        > td > input
+    why: Click the Sign On button to log in.
+  expected:
+    url_contains: /home
+- action: type
+  locator:
+    primary:
+      css: input[name="mid"]
+    fallbacks: []
+    why: Type the member ID into the member ID input field.
+  text: '{{member_id}}'
+- action: click
+  locator:
+    primary:
+      role: button
+      name: Search
+    fallbacks:
+    - text: Search
+      exact: true
+    - css: body > table > tbody > tr:nth-of-type(2) > td > form > table > tbody > tr:nth-of-type(2) >
+        td > input
+    why: Click the Search button to search for the member.
+- action: click
+  locator:
+    primary:
+      role: button
+      name: Does Not Exist
+    fallbacks: []
+    why: Deliberately missing, to test the handoff.
+- action: read
+  locator:
+    primary:
+      css: body > table > tbody > tr:nth-of-type(4) > td:nth-of-type(2) > font
+    fallbacks:
+    - text: $12,450.75
+    why: Read the savings balance from the member details table.
+  output_name: savings_balance
+outputs:
+- name: savings_balance
+  type: decimal
+  description: Read the savings balance from the member details table.
+success_check:
+  outputs_present:
+  - savings_balance
+known_outcomes:
+- text: No member found
+  outcome: NOT_FOUND
+  description: 'Default: the search found no member with that id. Edit as needed.'
+known_interruptions:
+- text: System maintenance notice
+  action: click
+  locator:
+    primary:
+      role: button
+      name: OK
+    fallbacks:
+    - text: OK
+      exact: true
+    why: 'Default: the maintenance popup blocks the page until OK is pressed. Edit as needed.'

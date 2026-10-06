@@ -1,0 +1,4 @@
+$ bag replay member-balance --input memberid=1003
+Error: Unknown input(s): memberid. This artifact takes: member_id.
+
+(exit code 1)

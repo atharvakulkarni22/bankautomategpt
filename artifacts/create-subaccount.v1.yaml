@@ -1,0 +1,147 @@
+# bag artifact: a saved, reusable task. Safe to edit by hand; it is checked every time it loads.
+# status draft = not yet reviewed. Run `bag approve <name>` once you have read it through.
+# Secrets appear only as {{secret:NAME}} placeholders, never as real values.
+metadata:
+  name: create-subaccount
+  version: 1
+  app: First Legacy Bank
+  description: 'Log in to the bank. Search for the member using member_id. On the member details page,
+    open a new sub-account: set the account type to account_type, type nickname into the Nickname field,
+    and type initial_balance into the opening balance field, then submit. On the confirmation screen,
+    check the account type, nickname and amount are correct, then click Confirm. Finish when the success
+    page shows the new sub-account number, and return it as output sub_account_number.'
+  status: approved
+  start_url: http://127.0.0.1:5000
+  source_recording: 20261006-033610-log-in-to-the-bank-search-for-the-member.json
+inputs:
+- name: account_type
+  type: string
+  description: Describe this input (account_type). Edit me.
+- name: initial_balance
+  type: string
+  description: Describe this input (initial_balance). Edit me.
+- name: member_id
+  type: string
+  description: Describe this input (member_id). Edit me.
+- name: nickname
+  type: string
+  description: Describe this input (nickname). Edit me.
+steps:
+- action: type
+  locator:
+    primary:
+      role: textbox
+      name: 'User name:'
+    fallbacks:
+    - label: 'User name:'
+    - css: input[name="user"]
+    why: Enter the bank user name to sign on.
+  text: '{{secret:BANK_USER}}'
+- action: type
+  locator:
+    primary:
+      css: input[name="pw"]
+    fallbacks: []
+    why: Type the bank password into the password field
+  text: '{{secret:BANK_PASSWORD}}'
+- action: click
+  locator:
+    primary:
+      role: button
+      name: Sign On
+    fallbacks:
+    - css: body > center > table > tbody > tr:nth-of-type(2) > td > form > table > tbody > tr:nth-of-type(3)
+        > td > input
+    why: Click the Sign On button to log into the bank.
+  expected:
+    url_contains: /home
+- action: type
+  locator:
+    primary:
+      css: input[name="mid"]
+    fallbacks: []
+    why: Type the member ID into the Member ID field.
+  text: '{{member_id}}'
+- action: click
+  locator:
+    primary:
+      role: button
+      name: Search
+    fallbacks:
+    - text: Search
+      exact: true
+    - css: body > table > tbody > tr:nth-of-type(2) > td > form > table > tbody > tr:nth-of-type(2) >
+        td > input
+    why: Click the Search button to search for the member.
+- action: click
+  locator:
+    primary:
+      role: link
+      name: Open sub-account
+    fallbacks:
+    - css: body > p > a:nth-of-type(1)
+    why: Click on Open sub-account link to open a new sub-account.
+- action: type
+  locator:
+    primary:
+      css: input[name="nick"]
+    fallbacks: []
+    why: Type the account nickname into the Nickname field.
+  text: '{{nickname}}'
+- action: type
+  locator:
+    primary:
+      css: input[name="amt"]
+    fallbacks: []
+    why: Type initial_balance into the opening balance field.
+  text: '{{initial_balance}}'
+- action: click
+  locator:
+    primary:
+      role: button
+      name: Continue
+    fallbacks:
+    - text: Continue
+    - css: body > table > tbody > tr:nth-of-type(2) > td > form > table > tbody > tr:nth-of-type(4) >
+        td > input
+    why: Click the Continue button to submit the new sub-account form.
+- action: click
+  locator:
+    primary:
+      role: button
+      name: Confirm
+    fallbacks:
+    - text: Confirm
+      exact: true
+    - css: body > form > p > input
+    why: Click Confirm to submit the sub-account creation.
+- action: read
+  locator:
+    primary:
+      css: body > p:nth-of-type(1) > font:nth-of-type(2) > b
+    fallbacks:
+    - text: SA-1001-02
+    why: Read the new sub-account number from the success page.
+  output_name: sub_account_number
+outputs:
+- name: sub_account_number
+  type: string
+  description: Read the new sub-account number from the success page.
+success_check:
+  outputs_present:
+  - sub_account_number
+known_outcomes:
+- text: No member found
+  outcome: NOT_FOUND
+  description: 'Default: the search found no member with that id. Edit as needed.'
+known_interruptions:
+- text: System maintenance notice
+  action: click
+  locator:
+    primary:
+      role: button
+      name: OK
+    fallbacks:
+    - text: OK
+      exact: true
+    why: 'Default: the maintenance popup blocks the page until OK is pressed. Edit as needed.'

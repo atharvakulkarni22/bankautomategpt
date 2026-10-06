@@ -1,0 +1,18 @@
+{
+  "run_id": "20261006-010244-discovery-log-in-and-find-the-savings-balance-for-",
+  "kind": "discovery",
+  "label": "Log in and find the savings balance for the member",
+  "status": "done",
+  "started_at": "2026-10-06T01:02:44+00:00",
+  "finished_at": "2026-10-06T01:04:31+00:00",
+  "seconds": 107.09,
+  "lines_logged": 13,
+  "screenshots": [],
+  "steps": 8,
+  "outputs": {
+    "savings_balance": "$830.10"
+  },
+  "message": "The savings balance is $830.10.",
+  "recording": "evidence\\recordings\\20261006-010244-log-in-and-find-the-savings-balance-for-.json",
+  "interventions": []
+}

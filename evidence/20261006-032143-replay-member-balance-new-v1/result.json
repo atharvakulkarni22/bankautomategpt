@@ -1,0 +1,29 @@
+{
+  "run_id": "20261006-032143-replay-member-balance-new-v1",
+  "kind": "replay",
+  "label": "member-balance-new-v1",
+  "status": "FAILURE",
+  "started_at": "2026-10-06T03:21:43+00:00",
+  "finished_at": "2026-10-06T03:22:16+00:00",
+  "seconds": 32.75,
+  "lines_logged": 11,
+  "screenshots": [
+    "failure-step4.png"
+  ],
+  "artifact": "member-balance-new v1",
+  "outputs": {},
+  "outcome_code": null,
+  "message": "",
+  "failure": {
+    "step": 4,
+    "phase": "step",
+    "action": "click",
+    "error": "TransientError",
+    "message": "click Target(text='OK') failed: Locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for get_by_text(\"OK\")\n    - locator resolved to <input value=\"OK\" type=\"button\" onclick=\"this.closest('div').style.display='none'\"/>\n  - attempting click action\n    2 × waiting for element to be visible, enabled and stable\n      - element is not visible\n    - retrying click action\n    - waiting 20ms\n    2 × waiting for element to be visible, enabled and stable\n      - element is not visible\n    - retrying click action\n      - waiting",
+    "expected": null,
+    "observed": "click Target(text='OK') failed: Locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for get_by_text(\"OK\")\n    - locator resolved to <input value=\"OK\" type=\"button\" onclick=\"this.closest('div').style.display='none'\"/>\n  - attempting click action\n    2 × waiting for element to be visible, enabled and stable\n      - element is not visible\n    - retrying click action\n    - waiting 20ms\n    2 × waiting for element to be visible, enabled and stable\n      - element is not visible\n    - retrying click action\n      - waiting",
+    "screenshot": "failure-step4.png"
+  },
+  "interventions": [],
+  "log_entries": 9
+}

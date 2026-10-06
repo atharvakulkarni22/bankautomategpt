@@ -1,0 +1,20 @@
+{
+  "run_id": "demo-replay-1-success",
+  "kind": "replay",
+  "label": "member-balance-v1",
+  "status": "SUCCESS",
+  "started_at": "2026-10-06T04:02:06+00:00",
+  "finished_at": "2026-10-06T04:02:07+00:00",
+  "seconds": 0.91,
+  "lines_logged": 7,
+  "screenshots": [],
+  "artifact": "member-balance v1",
+  "outputs": {
+    "savings_balance": "250000.00"
+  },
+  "outcome_code": null,
+  "message": "",
+  "failure": null,
+  "interventions": [],
+  "log_entries": 6
+}

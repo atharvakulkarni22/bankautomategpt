@@ -1,0 +1,8 @@
+{"seq": 1, "time": "2026-10-06T04:01:59+00:00", "source": "replay", "event": "start", "step": null, "url": "http://127.0.0.1:5059/login?popup=1&slow=1", "artifact": "member-balance v1"}
+{"seq": 2, "time": "2026-10-06T04:02:00+00:00", "source": "replay", "event": "step", "step": 1, "message": "type ok via primary"}
+{"seq": 3, "time": "2026-10-06T04:02:00+00:00", "source": "replay", "event": "step", "step": 2, "message": "type ok via primary"}
+{"seq": 4, "time": "2026-10-06T04:02:02+00:00", "source": "replay", "event": "step", "step": 3, "message": "click ok via primary"}
+{"seq": 5, "time": "2026-10-06T04:02:04+00:00", "source": "replay", "event": "interruption", "step": 4, "message": "'System maintenance notice' was showing; clicked Target(role='button', name='OK') (primary)."}
+{"seq": 6, "time": "2026-10-06T04:02:04+00:00", "source": "replay", "event": "step", "step": 4, "message": "type ok via primary"}
+{"seq": 7, "time": "2026-10-06T04:02:04+00:00", "source": "replay", "event": "step", "step": 5, "message": "click ok via primary"}
+{"seq": 8, "time": "2026-10-06T04:02:06+00:00", "source": "replay", "event": "step", "step": 6, "message": "read ok via primary"}

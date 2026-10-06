@@ -1,0 +1,14 @@
+$ bag replay member-balance --input member_id=1003 --start-url http://127.0.0.1:5059/login?popup=1&slow=1
+Replaying member-balance v1 from http://127.0.0.1:5059/login?popup=1&slow=1
+  step 1: type ok via primary
+  step 2: type ok via primary
+  step 3: click ok via primary
+  step 4: 'System maintenance notice' was showing; clicked Target(role='button', name='OK') (primary).
+  step 4: type ok via primary
+  step 5: click ok via primary
+  step 6: read ok via primary
+Evidence saved to D:\Assesment\BankAutomateGPT\evidence\demo-replay-4-faults
+SUCCESS in 6.7s
+  savings_balance = 250000.00
+
+(exit code 0)
